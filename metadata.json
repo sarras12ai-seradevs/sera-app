@@ -1,0 +1,6 @@
+{
+  "name": "SERA",
+  "description": "SERA (Safety, Education & Risk Awareness) — “Know Before You Take.” Modern OTC medicine educational platform with clear guidance, symptom explorer, drug interaction matrix, and emergency resources.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

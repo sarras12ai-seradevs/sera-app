@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SERA — Safety, Education &amp; Risk Awareness | Know Before You Take.</title>
+    <meta name="description" content="SERA (Safety, Education &amp; Risk Awareness) — “Know Before You Take.” Open educational platform providing transparent, evidence-based guidance on OTC medicines, active ingredients, dosage limits, and multi-drug interaction safety." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;0,800;1,600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <script>
+      // Silence dev HMR WebSocket unhandled promise rejections
+      window.addEventListener('unhandledrejection', function(event) {
+        var str = String((event.reason && (event.reason.message || event.reason)) || '');
+        if (str.indexOf('WebSocket') !== -1 || str.indexOf('ws:') !== -1 || str.indexOf('wss:') !== -1 || str.indexOf('vite') !== -1 || str.indexOf('HMR') !== -1) {
+          event.preventDefault();
+        }
+      });
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
