@@ -13,9 +13,9 @@ let cachedDdiRecords: InteractionRecord[] | null = null;
 let ongoingFetchPromise: Promise<InteractionRecord[]> | null = null;
 
 /**
- * Fetches Db_drug_interactions.csv / db_drug_interactions.csv using import.meta.env.BASE_URL
+ * Fetches /Db_drug_interactions.csv from the root public directory
  * and parses it into interaction records array using PapaParse.
- * Includes multiple fallback paths for casing and sub-path deployment resilience.
+ * Includes fallback paths for casing and sub-path deployment resilience.
  */
 export async function fetchAndParseDdiDataset(): Promise<InteractionRecord[]> {
   if (cachedDdiRecords && cachedDdiRecords.length > 0) {
@@ -32,10 +32,10 @@ export async function fetchAndParseDdiDataset(): Promise<InteractionRecord[]> {
       const cleanBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
 
       const candidateUrls = [
-        `${cleanBase}Db_drug_interactions.csv`,
-        `${cleanBase}db_drug_interactions.csv`,
         "/Db_drug_interactions.csv",
         "/db_drug_interactions.csv",
+        `${cleanBase}Db_drug_interactions.csv`,
+        `${cleanBase}db_drug_interactions.csv`,
         "Db_drug_interactions.csv",
         "db_drug_interactions.csv",
       ];
