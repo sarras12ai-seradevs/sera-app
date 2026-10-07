@@ -13,9 +13,9 @@ let cachedDdiRecords: InteractionRecord[] | null = null;
 let ongoingFetchPromise: Promise<InteractionRecord[]> | null = null;
 
 /**
- * Fetches /Db_drug_interactions.csv from the root public directory
- * and parses it into interaction records array using PapaParse.
- * Includes fallback paths for casing and sub-path deployment resilience.
+ * Fetches '/Db_drug_interactions.csv' relative to the base root URL using
+ * `import.meta.env.BASE_URL + 'Db_drug_interactions.csv'` and parses it into
+ * an interaction records array using PapaParse.
  */
 export async function fetchAndParseDdiDataset(): Promise<InteractionRecord[]> {
   if (cachedDdiRecords && cachedDdiRecords.length > 0) {
@@ -28,70 +28,58 @@ export async function fetchAndParseDdiDataset(): Promise<InteractionRecord[]> {
 
   ongoingFetchPromise = (async () => {
     try {
-      const baseUrl = import.meta.env.BASE_URL || "/";
-      const cleanBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-
-      const candidateUrls = [
+      const primaryUrl = import.meta.env.BASE_URL + "Db_drug_interactions.csv";
+      const fallbackUrls = [
         "/Db_drug_interactions.csv",
+        import.meta.env.BASE_URL + "db_drug_interactions.csv",
         "/db_drug_interactions.csv",
-        `${cleanBase}Db_drug_interactions.csv`,
-        `${cleanBase}db_drug_interactions.csv`,
-        "Db_drug_interactions.csv",
-        "db_drug_interactions.csv",
       ];
 
-      // Deduplicate URLs
-      const uniqueUrls = Array.from(new Set(candidateUrls));
+      // Deduplicate URLs while keeping primaryUrl first
+      const uniqueUrls = Array.from(new Set([primaryUrl, ...fallbackUrls]));
       let csvText = "";
       let successfulUrl = "";
 
       for (const url of uniqueUrls) {
         try {
           const response = await fetch(url);
-          if (response.ok) {
-            const text = await response.text();
-            // Verify it is actual CSV content and not HTML from SPA fallback
-            if (
-              text &&
-              !text.trim().toLowerCase().startsWith("<!doctype") &&
-              !text.trim().toLowerCase().startsWith("<html") &&
-              (text.includes(",") || text.includes("\t"))
-            ) {
-              csvText = text;
-              successfulUrl = url;
-              break;
-            }
+          if (!response.ok) {
+            console.error(
+              `[ddiDatasetLoader] Failed to fetch CSV dataset from "${url}": HTTP ${response.status} (${response.statusText})`
+            );
+            continue;
           }
-        } catch {
-          // Continue to next candidate URL
+
+          const text = await response.text();
+          // Verify it is actual CSV content and not HTML from SPA fallback
+          if (
+            text &&
+            !text.trim().toLowerCase().startsWith("<!doctype") &&
+            !text.trim().toLowerCase().startsWith("<html") &&
+            (text.includes(",") || text.includes("\t"))
+          ) {
+            csvText = text;
+            successfulUrl = url;
+            break;
+          } else {
+            console.error(
+              `[ddiDatasetLoader] Invalid CSV payload from "${url}": received HTML fallback or empty response instead of CSV data.`
+            );
+          }
+        } catch (fetchErr) {
+          console.error(
+            `[ddiDatasetLoader] Network error while fetching CSV dataset from "${url}":`,
+            fetchErr
+          );
         }
       }
 
       if (!csvText) {
-        // Fallback: try fetching from server browse API if static file couldn't be loaded
-        try {
-          const apiRes = await fetch("/api/interactions/browse?limit=5000");
-          if (apiRes.ok) {
-            const apiData = await apiRes.json();
-            if (Array.isArray(apiData.rows) && apiData.rows.length > 0) {
-              const apiRecords: InteractionRecord[] = apiData.rows.map((r: any) => ({
-                drug1: r.drug1 || r["Drug 1"] || "",
-                drug2: r.drug2 || r["Drug 2"] || "",
-                description: r.description || r["Interaction Description"] || "",
-                "Drug 1": r.drug1 || r["Drug 1"] || "",
-                "Drug 2": r.drug2 || r["Drug 2"] || "",
-                "Interaction Description": r.description || r["Interaction Description"] || "",
-              }));
-              cachedDdiRecords = apiRecords;
-              return apiRecords;
-            }
-          }
-        } catch (apiErr) {
-          console.warn("Backend API browse fallback also unavailable:", apiErr);
-        }
-
+        console.error(
+          `[ddiDatasetLoader] Exhausted all CSV fetch paths beginning with "${primaryUrl}". Dataset could not be loaded.`
+        );
         throw new Error(
-          "Could not locate Db_drug_interactions.csv across attempted static paths and API endpoints."
+          `Could not load Db_drug_interactions.csv from ${primaryUrl}.`
         );
       }
 

@@ -9,6 +9,50 @@ export interface SeverityChartItem {
 }
 
 /**
+ * Canonical severity classifier shared across the summary banner calculation,
+ * risk distribution bar chart, and interaction checker in all environments.
+ */
+export function classifyCsvInteractionSeverity(
+  description?: string,
+  explicitSeverity?: string
+): "Severe" | "Moderate" | "Minor" {
+  const s = (explicitSeverity || "").toLowerCase();
+  const d = (description || "").toLowerCase();
+
+  if (
+    s === "severe" ||
+    s === "major" ||
+    d.includes("adverse effects can be increased") ||
+    d.includes("cardiotoxic") ||
+    d.includes("severe") ||
+    d.includes("toxicity") ||
+    d.includes("toxic") ||
+    d.includes("hemorrhage") ||
+    d.includes("bleeding") ||
+    d.includes("arrhythmia") ||
+    d.includes("fatal") ||
+    d.includes("hyperkalemia") ||
+    d.includes("apnea") ||
+    d.includes("prolong")
+  ) {
+    return "Severe";
+  }
+
+  if (
+    s === "moderate" ||
+    d.includes("metabolism") ||
+    d.includes("serum concentration") ||
+    d.includes("therapeutic") ||
+    d.includes("moderate") ||
+    d.includes("monitor")
+  ) {
+    return "Moderate";
+  }
+
+  return "Minor";
+}
+
+/**
  * Standardize severity levels:
  * - Major / High Risk -> #EF4444 (Red)
  * - Moderate Caution -> #F59E0B (Amber/Yellow)
@@ -23,34 +67,12 @@ export function aggregateSeverityCounts(
 
   for (let i = 0; i < records.length; i++) {
     const r = records[i];
-    const s = (r.severity || "").toLowerCase();
-    const d = (r.description || r["Interaction Description"] || "").toLowerCase();
+    const desc = r.description || r["Interaction Description"] || "";
+    const level = classifyCsvInteractionSeverity(desc, r.severity);
 
-    if (
-      s === "severe" ||
-      s === "major" ||
-      d.includes("adverse effects can be increased") ||
-      d.includes("cardiotoxic") ||
-      d.includes("severe") ||
-      d.includes("toxicity") ||
-      d.includes("toxic") ||
-      d.includes("hemorrhage") ||
-      d.includes("bleeding") ||
-      d.includes("arrhythmia") ||
-      d.includes("fatal") ||
-      d.includes("hyperkalemia") ||
-      d.includes("apnea") ||
-      d.includes("prolong")
-    ) {
+    if (level === "Severe") {
       major++;
-    } else if (
-      s === "moderate" ||
-      d.includes("metabolism") ||
-      d.includes("serum concentration") ||
-      d.includes("therapeutic") ||
-      d.includes("moderate") ||
-      d.includes("monitor")
-    ) {
+    } else if (level === "Moderate") {
       moderate++;
     } else {
       minor++;

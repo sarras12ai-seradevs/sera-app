@@ -1,5 +1,7 @@
 import { InteractionPair, InteractionSeverity, BatchSafetyAdvice, SaferAlternative, Medicine } from "../types";
 import { allMedicines } from "../data/medicinesData";
+import { getCachedDdiRecords, InteractionRecord } from "./ddiDatasetLoader";
+import { classifyCsvInteractionSeverity } from "../components/SeverityBarChart";
 
 export type NormalizedSeverity = "HIGH" | "MAJOR" | "MODERATE" | "MINOR" | "NONE";
 
@@ -1082,7 +1084,212 @@ const CLINICAL_INTERACTION_RULES: ClinicalInteractionRule[] = [
 ];
 
 /**
+ * Chemical synonym map for matching clinical keys against Db_drug_interactions.csv
+ */
+const CSV_CHEMICAL_ALIASES: Record<string, string[]> = {
+  aspirin: ["acetylsalicylic acid", "aspirin", "salicylic acid", "magnesium salicylate"],
+  paracetamol: ["acetaminophen", "paracetamol", "propacetamol"],
+  warfarin: ["warfarin", "acenocoumarol", "dicoumarol"],
+  furosemide: ["furosemide", "frusemide"],
+  torasemide: ["torasemide", "torsemide"],
+  digoxin: ["digoxin", "digitoxin"],
+  chlorpheniramine: ["chlorpheniramine", "dexchlorpheniramine maleate"],
+  pheniramine: ["pheniramine", "chlorpheniramine", "dexchlorpheniramine maleate"],
+  "aluminium hydroxide": ["aluminum hydroxide", "aluminium hydroxide", "magnesium hydroxide"],
+  "magnesium hydroxide": ["magnesium hydroxide", "aluminum hydroxide", "aluminium hydroxide"],
+  omeprazole: ["omeprazole", "esomeprazole"],
+  prednisolone: ["prednisolone", "prednisone"],
+  heparin: ["heparin", "enoxaparin", "dalteparin", "fondaparinux"],
+  iron: ["ferrous sulfate", "ferrous fumarate", "ferrous gluconate", "iron"],
+};
+
+const ddiPairIndexCache = new WeakMap<InteractionRecord[], Map<string, InteractionRecord>>();
+
+function getDdiPairIndex(records: InteractionRecord[]): Map<string, InteractionRecord> {
+  const cached = ddiPairIndexCache.get(records);
+  if (cached) return cached;
+
+  const map = new Map<string, InteractionRecord>();
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i];
+    const d1 = (r.drug1 || r["Drug 1"] || "").toLowerCase().trim();
+    const d2 = (r.drug2 || r["Drug 2"] || "").toLowerCase().trim();
+    if (d1 && d2) {
+      map.set(`${d1}||${d2}`, r);
+    }
+  }
+  ddiPairIndexCache.set(records, map);
+  return map;
+}
+
+export function getCsvSearchTermsForDrug(
+  inputName: string,
+  genericName: string,
+  clinicalKey: string
+): string[] {
+  const terms = new Set<string>();
+  const addClean = (val?: string) => {
+    if (!val) return;
+    const lower = val.toLowerCase().trim();
+    if (lower) terms.add(lower);
+    const noParens = lower.replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
+    if (noParens) terms.add(noParens);
+    const parenMatches = lower.match(/\(([^)]+)\)/g);
+    if (parenMatches) {
+      for (const pm of parenMatches) {
+        const inner = pm.slice(1, -1).trim();
+        if (inner) {
+          terms.add(inner);
+          for (const part of inner.split(/[\/+,]/)) {
+            const pTrim = part.trim();
+            if (pTrim) terms.add(pTrim);
+          }
+        }
+      }
+    }
+  };
+
+  addClean(clinicalKey);
+  addClean(genericName);
+  addClean(inputName);
+
+  const aliases = CSV_CHEMICAL_ALIASES[clinicalKey.toLowerCase().trim()];
+  if (aliases) {
+    for (const a of aliases) {
+      terms.add(a.toLowerCase().trim());
+    }
+  }
+
+  return Array.from(terms).filter(Boolean);
+}
+
+export function lookupPairInDdiRecords(
+  termsA: string[],
+  termsB: string[],
+  ddiRecords: InteractionRecord[]
+): {
+  row: InteractionRecord;
+  direction: string;
+} | null {
+  if (!ddiRecords || ddiRecords.length === 0) return null;
+
+  const pairMap = getDdiPairIndex(ddiRecords);
+
+  // 1. Exact bidirectional lookup in O(1) via indexed Map
+  for (const a of termsA) {
+    for (const b of termsB) {
+      if (a === b) continue;
+      const forward = pairMap.get(`${a}||${b}`);
+      if (forward) {
+        return {
+          row: forward,
+          direction: "Match 1 (Drug 1 == A, Drug 2 == B)",
+        };
+      }
+      const reverse = pairMap.get(`${b}||${a}`);
+      if (reverse) {
+        return {
+          row: reverse,
+          direction: "Match 2 (Drug 1 == B, Drug 2 == A)",
+        };
+      }
+    }
+  }
+
+  // 2. Fallback substring match across loaded CSV records
+  for (let i = 0; i < ddiRecords.length; i++) {
+    const r = ddiRecords[i];
+    const d1 = (r.drug1 || r["Drug 1"] || "").toLowerCase().trim();
+    const d2 = (r.drug2 || r["Drug 2"] || "").toLowerCase().trim();
+    if (!d1 || !d2) continue;
+
+    const forwardSub =
+      termsA.some((a) => a.length >= 3 && d1.includes(a)) &&
+      termsB.some((b) => b.length >= 3 && d2.includes(b));
+    if (forwardSub) {
+      return {
+        row: r,
+        direction: "Match 1 (Drug 1 == A, Drug 2 == B)",
+      };
+    }
+
+    const reverseSub =
+      termsB.some((b) => b.length >= 3 && d1.includes(b)) &&
+      termsA.some((a) => a.length >= 3 && d2.includes(a));
+    if (reverseSub) {
+      return {
+        row: r,
+        direction: "Match 2 (Drug 1 == B, Drug 2 == A)",
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Shared helper that converts a raw Db_drug_interactions.csv row into
+ * standardized severity, plain-English explanation, and safety guidance using
+ * the exact same `classifyCsvInteractionSeverity` logic as the summary banner.
+ */
+export function interpretCsvRowForDisplay(
+  drug1: string,
+  drug2: string,
+  description: string
+): {
+  severity: "Severe" | "Moderate" | "Minor";
+  ruleSeverity: NormalizedSeverity;
+  title: string;
+  plainEnglish: string;
+  safetyGuidance: string;
+  isRedFlag: boolean;
+} {
+  const severity = classifyCsvInteractionSeverity(description);
+  const lowerDesc = (description || "").toLowerCase();
+
+  let plainEnglish = description;
+  let safetyGuidance =
+    "Consult your doctor or pharmacist before combining these medications, and monitor for any unusual symptoms.";
+
+  if (severity === "Severe") {
+    plainEnglish = `${description} Combining ${drug1} and ${drug2} carries a high clinical risk of serious adverse effects or organ toxicity.`;
+    safetyGuidance = `Avoid combining ${drug1} and ${drug2} unless explicitly prescribed and closely monitored by your physician. Seek medical attention immediately if severe side effects occur.`;
+  } else if (severity === "Moderate") {
+    if (lowerDesc.includes("metabolism") || lowerDesc.includes("serum concentration") || lowerDesc.includes("excretion")) {
+      plainEnglish = `${description} Taking ${drug1} alongside ${drug2} can alter how quickly the medication is cleared from your bloodstream, potentially increasing side effects or changing treatment effectiveness.`;
+      safetyGuidance = `Monitor closely when combining ${drug1} and ${drug2}. Consult a doctor or pharmacist about whether a dose adjustment or spacing schedule is needed.`;
+    } else {
+      plainEnglish = `${description} Combining ${drug1} and ${drug2} requires clinical caution and monitoring to ensure safe therapeutic levels.`;
+      safetyGuidance = `Use caution when taking ${drug1} and ${drug2} together. Space doses as advised by a pharmacist and watch for changes in how you feel.`;
+    }
+  } else {
+    plainEnglish = `${description} This combination has a mild or manageable clinical interaction profile.`;
+    safetyGuidance = `Follow standard package dosing instructions and inform your pharmacist if you take both ${drug1} and ${drug2} regularly.`;
+  }
+
+  const ruleSeverity: NormalizedSeverity =
+    severity === "Severe" ? "MAJOR" : severity === "Moderate" ? "MODERATE" : "MINOR";
+
+  const title =
+    severity === "Severe"
+      ? `MAJOR INTERACTION: ${drug1} + ${drug2}`
+      : severity === "Moderate"
+      ? `Moderate Interaction • Monitor Closely: ${drug1} + ${drug2}`
+      : `Minor / Informational Interaction: ${drug1} + ${drug2}`;
+
+  return {
+    severity,
+    ruleSeverity,
+    title,
+    plainEnglish,
+    safetyGuidance,
+    isRedFlag: severity === "Severe",
+  };
+}
+
+/**
  * Bidirectional pairwise interaction lookup between two clinical generic keys
+ * across both Clinical Interaction Rules and the loaded Db_drug_interactions.csv dataset array.
  */
 export function checkGenericPairInteraction(
   drugAInput: string,
@@ -1090,7 +1297,8 @@ export function checkGenericPairInteraction(
   keyA: string,
   drugBInput: string,
   genericB: string,
-  keyB: string
+  keyB: string,
+  ddiRecords: InteractionRecord[] = getCachedDdiRecords() || []
 ): EvaluatedPairInteraction {
   const labelA =
     drugAInput.toLowerCase() === genericA.toLowerCase() ? genericA : `${drugAInput} (${genericA})`;
@@ -1126,14 +1334,21 @@ export function checkGenericPairInteraction(
     };
   }
 
+  // Look up the pair bidirectionally in the loaded CSV dataset array (Db_drug_interactions.csv)
+  const termsA = getCsvSearchTermsForDrug(drugAInput, genericA, keyA);
+  const termsB = getCsvSearchTermsForDrug(drugBInput, genericB, keyB);
+  const csvMatch = lookupPairInDdiRecords(termsA, termsB, ddiRecords);
+
   // 2. Check all Clinical Interaction Rules bidirectionally: (keyA, keyB) AND (keyB, keyA)
   for (const rule of CLINICAL_INTERACTION_RULES) {
     const forwardMatch = rule.matches(keyA, keyB);
     const reverseMatch = rule.matches(keyB, keyA);
     if (forwardMatch || reverseMatch) {
-      const direction = forwardMatch
-        ? "Match 1 (Drug 1 == A, Drug 2 == B)"
-        : "Match 2 (Drug 1 == B, Drug 2 == A)";
+      const direction =
+        csvMatch?.direction ||
+        (forwardMatch
+          ? "Match 1 (Drug 1 == A, Drug 2 == B)"
+          : "Match 2 (Drug 1 == B, Drug 2 == A)");
       const explanationText = rule.explanation(genericA, genericB);
       const recommendationText = rule.recommendation(genericA, genericB);
 
@@ -1151,7 +1366,7 @@ export function checkGenericPairInteraction(
         genericB,
         combinedDrugNames,
         matchedInCsv: true,
-        csvDescription: `${rule.title} — ${rule.mechanism}`,
+        csvDescription: csvMatch?.row?.description || `${rule.title} — ${rule.mechanism}`,
         matchDirection: direction,
         severity: rule.uiSeverity,
         ruleSeverity: rule.ruleSeverity,
@@ -1165,7 +1380,33 @@ export function checkGenericPairInteraction(
     }
   }
 
-  // 3. No interaction matched
+  // 3. If matched directly in the loaded CSV dataset array (Db_drug_interactions.csv)
+  if (csvMatch && csvMatch.row) {
+    const rowD1 = csvMatch.row.drug1 || csvMatch.row["Drug 1"] || genericA;
+    const rowD2 = csvMatch.row.drug2 || csvMatch.row["Drug 2"] || genericB;
+    const rowDesc = csvMatch.row.description || csvMatch.row["Interaction Description"] || "";
+    const interpreted = interpretCsvRowForDisplay(rowD1, rowD2, rowDesc);
+
+    return {
+      drugAInput,
+      drugBInput,
+      genericA: rowD1,
+      genericB: rowD2,
+      combinedDrugNames,
+      matchedInCsv: true,
+      csvDescription: rowDesc,
+      matchDirection: csvMatch.direction,
+      severity: interpreted.severity,
+      ruleSeverity: interpreted.ruleSeverity,
+      title: interpreted.title,
+      plainEnglish: interpreted.plainEnglish,
+      mechanism: rowDesc,
+      safetyGuidance: interpreted.safetyGuidance,
+      isRedFlag: interpreted.isRedFlag,
+    };
+  }
+
+  // 4. No interaction matched
   return {
     drugAInput,
     drugBInput,
@@ -1188,8 +1429,8 @@ export function checkGenericPairInteraction(
 
 /**
  * Evaluates a basket of 2+ medicines using active generic ingredient normalization,
- * bidirectional pairwise checking, fallback safety guards, and lowered alert thresholds
- * (surfacing HIGH, MAJOR, and MODERATE interactions immediately).
+ * bidirectional pairwise checking against the loaded Db_drug_interactions.csv dataset array,
+ * fallback safety guards, and unified severity classification across all environments.
  */
 export function evaluateBasketInteractions(
   basket: Array<{
@@ -1197,7 +1438,8 @@ export function evaluateBasketInteractions(
     name: string;
     activeIngredients?: string[];
     therapeuticClass?: string;
-  }>
+  }>,
+  ddiRecords: InteractionRecord[] = getCachedDdiRecords() || []
 ): EvaluatedBasketResult {
   const mappedDrugs = basket.map((item) => {
     const extracted = extractActiveGenerics(item.name || item.id || "", item.activeIngredients);
@@ -1230,7 +1472,8 @@ export function evaluateBasketInteractions(
             keyA,
             drugB.inputName,
             genB,
-            keyB
+            keyB,
+            ddiRecords
           );
           allPairResults.push(pairEval);
         }
@@ -1238,23 +1481,28 @@ export function evaluateBasketInteractions(
     }
   }
 
-  // Catch-all severity evaluation: check if ANY pair matched HIGH, MAJOR, or MODERATE
+  // Catch-all severity evaluation: check if ANY pair matched HIGH, MAJOR, MODERATE, or MINOR
   const clashingPairs = allPairResults.filter(
     (p) =>
       p.ruleSeverity === "HIGH" ||
       p.ruleSeverity === "MAJOR" ||
       p.ruleSeverity === "MODERATE" ||
+      p.ruleSeverity === "MINOR" ||
       p.severity === "Severe" ||
-      p.severity === "Moderate"
+      p.severity === "Moderate" ||
+      p.severity === "Minor"
   );
 
   const hasMajor = clashingPairs.some(
     (p) => p.ruleSeverity === "HIGH" || p.ruleSeverity === "MAJOR" || p.severity === "Severe"
   );
-  const hasModerate = clashingPairs.some(
-    (p) => p.ruleSeverity === "MODERATE" || p.severity === "Moderate"
-  );
-  const hasMinor = allPairResults.some((p) => p.severity === "Minor");
+  const hasModerate =
+    !hasMajor &&
+    clashingPairs.some((p) => p.ruleSeverity === "MODERATE" || p.severity === "Moderate");
+  const hasMinor =
+    !hasMajor &&
+    !hasModerate &&
+    clashingPairs.some((p) => p.ruleSeverity === "MINOR" || p.severity === "Minor");
 
   const severity: "Major" | "Moderate" | "Minor" | "None" = hasMajor
     ? "Major"

@@ -26,15 +26,20 @@ import { useDataset } from "../context/DatasetContext";
 import {
   evaluateBasketInteractions,
   extractActiveGenerics,
+  interpretCsvRowForDisplay,
+  getCsvSearchTermsForDrug,
+  normalizeToClinicalKey,
   CLINICAL_DRUG_SUGGESTIONS,
 } from "../utils/interactionEngine";
 import {
   fetchAndParseDdiDataset,
+  getCachedDdiRecords,
   InteractionRecord,
 } from "../utils/ddiDatasetLoader";
 import {
   SeverityBarChart,
   aggregateSeverityCounts,
+  classifyCsvInteractionSeverity,
 } from "./SeverityBarChart";
 
 export interface InteractionCheckerProps {
@@ -313,8 +318,10 @@ export const InteractionChecker: React.FC<InteractionCheckerProps> = ({
 }) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { telemetryBanner, searchClientDataset } = useDataset();
-  const [clientDdiRecords, setClientDdiRecords] = useState<InteractionRecord[]>(
-    initialDdiRecords || []
+  const [clientDdiRecords, setClientDdiRecords] = useState<InteractionRecord[]>(() =>
+    initialDdiRecords && initialDdiRecords.length > 0
+      ? initialDdiRecords
+      : getCachedDdiRecords() || []
   );
 
   // Index unique drugs directly from the 11,980 DDI rows for fast autocomplete
@@ -518,7 +525,7 @@ export const InteractionChecker: React.FC<InteractionCheckerProps> = ({
         brandExamples: [],
       }));
 
-    setDatasetDrugs((prev) => (prev.length > 0 ? prev : sortedDrugs));
+    setDatasetDrugs(sortedDrugs);
   }, []);
 
   // Sync initialDdiRecords if provided by parent or updated
@@ -528,116 +535,28 @@ export const InteractionChecker: React.FC<InteractionCheckerProps> = ({
     }
   }, [initialDdiRecords, applyDdiDataset]);
 
-  // Load DDI dataset drugs & initial browsed rows on mount
+  // Load DDI dataset drugs & initial browsed rows on mount from the shared CSV dataset loader
   useEffect(() => {
-    // 1. Fetch and parse DDI CSV on client directly if not provided
-    if (!initialDdiRecords || initialDdiRecords.length === 0) {
-      fetchAndParseDdiDataset()
-        .then((records) => {
-          applyDdiDataset(records);
-        })
-        .catch((err) => {
-          console.error("Failed to load DDI records on InteractionChecker mount:", err);
-        });
+    const cached = getCachedDdiRecords();
+    if (initialDdiRecords && initialDdiRecords.length > 0) {
+      applyDdiDataset(initialDdiRecords);
+      return;
+    }
+    if (cached && cached.length > 0) {
+      applyDdiDataset(cached);
+      return;
     }
 
-    // 2. Also query backend API if available
-    fetch("/api/interactions/drugs?limit=48")
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
-      .then((data) => {
-        if (data.drugs && data.drugs.length > 0) setDatasetDrugs(data.drugs);
-        if (data.totalUniqueDrugs) setTotalUniqueDdiDrugs(data.totalUniqueDrugs);
-        if (data.totalInteractionPairs) setTotalDdiPairs(data.totalInteractionPairs);
+    fetchAndParseDdiDataset()
+      .then((records) => {
+        applyDdiDataset(records);
       })
       .catch((err) => {
-        console.log("Using client-parsed DDI dataset (backend API idle or offline):", err?.message || err);
+        console.error("Failed to load DDI records on InteractionChecker mount:", err);
       });
   }, [initialDdiRecords, applyDdiDataset]);
 
-  // Browse db_drug_interactions.csv rows whenever filter or search query changes
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsLoadingBrowse(true);
-      const q = datasetSearchQuery.trim().toLowerCase();
-      const filterDrug = selectedDatasetDrugFilter.trim().toLowerCase();
-
-      // Try backend endpoint first, fallback to client-parsed records
-      const params = new URLSearchParams();
-      if (q) params.set("q", datasetSearchQuery.trim());
-      if (selectedDatasetDrugFilter) params.set("drug", selectedDatasetDrugFilter);
-      params.set("limit", "18");
-
-      fetch(`/api/interactions/browse?${params.toString()}`)
-        .then((res) => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.json();
-        })
-        .then((data) => {
-          if (data.rows && data.rows.length > 0) {
-            setBrowsedRows(data.rows);
-            if (typeof data.totalMatching === "number") setTotalMatchingRows(data.totalMatching);
-            if (data.totalDatasetPairs) setTotalDdiPairs(data.totalDatasetPairs);
-            if (data.uniqueDrugsCount) setTotalUniqueDdiDrugs(data.uniqueDrugsCount);
-          } else {
-            throw new Error("No rows returned from backend browse");
-          }
-        })
-        .catch(() => {
-          // Client-side fallback filter over the 11,980 loaded records
-          if (clientDdiRecords.length > 0) {
-            let filtered = clientDdiRecords;
-            if (filterDrug) {
-              filtered = filtered.filter(
-                (r) =>
-                  r.drug1.toLowerCase() === filterDrug ||
-                  r.drug2.toLowerCase() === filterDrug
-              );
-            }
-            if (q) {
-              filtered = filtered.filter(
-                (r) =>
-                  r.drug1.toLowerCase().includes(q) ||
-                  r.drug2.toLowerCase().includes(q) ||
-                  r.description.toLowerCase().includes(q)
-              );
-            }
-
-            setTotalMatchingRows(filtered.length);
-            setBrowsedRows(
-              filtered.slice(0, 18).map((r) => {
-                const descLower = r.description.toLowerCase();
-                const isSevere =
-                  descLower.includes("increase the cardiotoxic") ||
-                  descLower.includes("severe") ||
-                  descLower.includes("toxicity") ||
-                  descLower.includes("hemorrhage") ||
-                  descLower.includes("bleeding") ||
-                  descLower.includes("arrhythmia");
-
-                return {
-                  drug1: r.drug1,
-                  drug2: r.drug2,
-                  description: r.description,
-                  severity: isSevere ? ("Severe" as const) : ("Moderate" as const),
-                  plainEnglish: r.description,
-                  safetyGuidance: isSevere
-                    ? "Consult your doctor or pharmacist before combining these medications."
-                    : "Monitor closely for changes in therapeutic effect or side effects.",
-                };
-              })
-            );
-          }
-        })
-        .finally(() => setIsLoadingBrowse(false));
-    }, 150);
-
-    return () => clearTimeout(timer);
-  }, [datasetSearchQuery, selectedDatasetDrugFilter, clientDdiRecords]);
-
-  // Filtered DDI records matching active search and active ingredient tags
+  // Filtered DDI records matching active search and active ingredient tags from the loaded CSV dataset array
   const filteredDdiRows = useMemo(() => {
     if (!clientDdiRecords || clientDdiRecords.length === 0) return [];
     const q = datasetSearchQuery.trim().toLowerCase();
@@ -647,21 +566,72 @@ export const InteractionChecker: React.FC<InteractionCheckerProps> = ({
       return clientDdiRecords;
     }
 
+    // Resolve any brand or synonym in the search query to its canonical CSV search terms
+    const queryTerms = q
+      ? Array.from(
+          new Set([
+            q,
+            ...resolveClientBrandToGenerics(q).flatMap((gen) =>
+              getCsvSearchTermsForDrug(q, gen, normalizeToClinicalKey(gen))
+            ),
+          ])
+        )
+      : [];
+
+    const filterTerms = filterDrug
+      ? Array.from(
+          new Set([
+            filterDrug,
+            ...resolveClientBrandToGenerics(filterDrug).flatMap((gen) =>
+              getCsvSearchTermsForDrug(filterDrug, gen, normalizeToClinicalKey(gen))
+            ),
+          ])
+        )
+      : [];
+
     return clientDdiRecords.filter((r) => {
       const d1 = (r.drug1 || r["Drug 1"] || "").toLowerCase();
       const d2 = (r.drug2 || r["Drug 2"] || "").toLowerCase();
       const desc = (r.description || r["Interaction Description"] || "").toLowerCase();
 
-      const matchesTag = !filterDrug || d1 === filterDrug || d2 === filterDrug;
-      const matchesQuery = !q || d1.includes(q) || d2.includes(q) || desc.includes(q);
+      const matchesTag =
+        filterTerms.length === 0 ||
+        filterTerms.some((t) => d1 === t || d2 === t);
+      const matchesQuery =
+        queryTerms.length === 0 ||
+        queryTerms.some((t) => d1.includes(t) || d2.includes(t) || desc.includes(t));
 
       return matchesTag && matchesQuery;
     });
   }, [clientDdiRecords, datasetSearchQuery, selectedDatasetDrugFilter]);
 
-  // Compute dynamic color-coded severity breakdown from the filtered DDI rows
+  // Compute dynamic color-coded severity breakdown from the exact same filtered DDI rows
   const severityChartData = useMemo(() => {
     return aggregateSeverityCounts(filteredDdiRows);
+  }, [filteredDdiRows]);
+
+  // Synchronize browsed rows and totalMatchingRows directly from filteredDdiRows in all environments
+  useEffect(() => {
+    setIsLoadingBrowse(true);
+    setTotalMatchingRows(filteredDdiRows.length);
+    setBrowsedRows(
+      filteredDdiRows.slice(0, 18).map((r) => {
+        const d1 = r.drug1 || r["Drug 1"] || "";
+        const d2 = r.drug2 || r["Drug 2"] || "";
+        const desc = r.description || r["Interaction Description"] || "";
+        const interpreted = interpretCsvRowForDisplay(d1, d2, desc);
+
+        return {
+          drug1: d1,
+          drug2: d2,
+          description: desc,
+          severity: interpreted.severity,
+          plainEnglish: interpreted.plainEnglish,
+          safetyGuidance: interpreted.safetyGuidance,
+        };
+      })
+    );
+    setIsLoadingBrowse(false);
   }, [filteredDdiRows]);
 
   // Perform live search query against full 248k dataset + 1,166 DDI drugs + local repository
@@ -733,29 +703,6 @@ export const InteractionChecker: React.FC<InteractionCheckerProps> = ({
             source: "ddi" as const,
           }));
 
-        // 4. Query DDI drugs API endpoint (/api/interactions/drugs, NOT 248k index)
-        try {
-          const ddiRes = await fetch(`/api/interactions/drugs?q=${encodeURIComponent(q)}&limit=8`);
-          if (ddiRes.ok) {
-            const ddiData = await ddiRes.json();
-            const fetchedMatches: BasketMedicine[] = (ddiData.drugs || []).map((d: any) => ({
-              id: `ddi-${d.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
-              name: d.name,
-              activeIngredients: [d.name],
-              therapeuticClass: d.category || `Verified DDI Compound (${d.interactionCount} pairs)`,
-              source: "ddi" as const,
-            }));
-            for (const fm of fetchedMatches) {
-              if (
-                !exactMatches.some((e) => e.name.toLowerCase() === fm.name.toLowerCase()) &&
-                !prefixMatches.some((e) => e.name.toLowerCase() === fm.name.toLowerCase())
-              ) {
-                prefixMatches.push(fm);
-              }
-            }
-          }
-        } catch {}
-
         const combinedDdi = [
           ...exactMatches,
           ...clinicalMatches,
@@ -826,11 +773,16 @@ export const InteractionChecker: React.FC<InteractionCheckerProps> = ({
       }));
 
       try {
-        // 2. Query both 248k Medicine Search API and DDI Drugs API in parallel
-        const [medRes, ddiRes] = await Promise.all([
-          fetch(`/api/medicines/search?q=${encodeURIComponent(q)}&limit=8`),
-          fetch(`/api/interactions/drugs?q=${encodeURIComponent(q)}&limit=8`),
-        ]);
+        const ddiClientMatches: BasketMedicine[] = uniqueDdiDrugsList
+          .filter((item) => item.name.toLowerCase().includes(q))
+          .slice(0, 8)
+          .map((item) => ({
+            id: `ddi-${item.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+            name: item.name,
+            activeIngredients: [item.name],
+            therapeuticClass: `Verified DDI Compound (${item.count} pairs)`,
+            source: "ddi" as const,
+          }));
 
         const combined: BasketMedicine[] = [...clinicalMatches];
         for (const lm of localMatches) {
@@ -843,48 +795,9 @@ export const InteractionChecker: React.FC<InteractionCheckerProps> = ({
             combined.push(cm);
           }
         }
-
-        if (ddiRes.ok) {
-          const ddiData = await ddiRes.json();
-          const ddiMatches: BasketMedicine[] = (ddiData.drugs || []).map((d: any) => ({
-            id: `ddi-${d.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
-            name: d.name,
-            activeIngredients: [d.name],
-            therapeuticClass: d.category || `Verified DDI Compound (${d.interactionCount} pairs)`,
-            source: "ddi",
-          }));
-          for (const dm of ddiMatches) {
-            if (!combined.some((c) => c.name.toLowerCase() === dm.name.toLowerCase())) {
-              combined.push(dm);
-            }
-          }
-        }
-
-        if (medRes.ok) {
-          const medData = await medRes.json();
-          const datasetMatches: BasketMedicine[] = (medData.results || []).map((r: any) => {
-            const resolvedGenerics =
-              r.composition && r.composition.length > 0
-                ? r.composition
-                : resolveClientBrandToGenerics(r.name);
-            return {
-              id: r.name.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
-              name: r.name,
-              activeIngredients: resolvedGenerics,
-              therapeuticClass: r.therapeuticClass || r.actionClass || "Pharmaceutical",
-              chemicalClass: r.chemicalClass,
-              source: r.source === "db_drug_interactions.csv" ? "ddi" : "dataset",
-            };
-          });
-
-          for (const dm of datasetMatches) {
-            if (
-              !combined.some(
-                (c) => c.id === dm.id || c.name.toLowerCase() === dm.name.toLowerCase()
-              )
-            ) {
-              combined.push(dm);
-            }
+        for (const dm of ddiClientMatches) {
+          if (!combined.some((c) => c.name.toLowerCase() === dm.name.toLowerCase())) {
+            combined.push(dm);
           }
         }
 
@@ -913,46 +826,61 @@ export const InteractionChecker: React.FC<InteractionCheckerProps> = ({
     }, 160);
 
     return () => clearTimeout(timer);
-  }, [searchQuery, basket]);
+  }, [searchQuery, basket, uniqueDdiDrugsList, useDdiOnly, searchClientDataset]);
 
   /**
-   * Direct Backend Interaction Check Function
-   * Calls POST /api/check-interactions on server/interactionEngine.ts
+   * Unified Interaction Check Function
+   * Evaluates the basket directly against the loaded CSV dataset array (clientDdiRecords)
+   * across all environments (local dev and Netlify static production).
    */
-  const executeInteractionCheck = async (targetBasket: BasketMedicine[] = basket) => {
-    if (targetBasket.length < 2) {
-      setInteractionResult(null);
-      return;
-    }
-
-    const medicineNames = targetBasket.map((b) => b.name);
-    setIsCheckingInteraction(true);
-
-    try {
-      const res = await fetch("/api/check-interactions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ drugs: medicineNames }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setInteractionResult(data);
+  const executeInteractionCheck = useCallback(
+    async (targetBasket: BasketMedicine[] = basket) => {
+      if (targetBasket.length < 2) {
+        setInteractionResult(null);
+        return;
       }
-    } catch (err) {
-      console.error("Error checking drug interactions:", err);
-    } finally {
-      setIsCheckingInteraction(false);
-    }
-  };
 
-  // Automatically check interactions when basket changes
+      setIsCheckingInteraction(true);
+
+      try {
+        let activeRecords = clientDdiRecords;
+        if (!activeRecords || activeRecords.length === 0) {
+          activeRecords = await fetchAndParseDdiDataset();
+          applyDdiDataset(activeRecords);
+        }
+
+        const evaluated = evaluateBasketInteractions(targetBasket, activeRecords);
+        setInteractionResult({
+          severity: evaluated.severity,
+          overallSeverity: evaluated.overallSeverity,
+          title: evaluated.title,
+          explanation: evaluated.explanation,
+          mechanism: evaluated.mechanism,
+          recommendation: evaluated.recommendation,
+          saferAlternatives: evaluated.saferAlternatives,
+          isAiEvaluated: evaluated.isAiEvaluated,
+          mappedIngredients: evaluated.mappedIngredients,
+          hasRedFlag: evaluated.hasRedFlag,
+          totalDatasetPairs: activeRecords.length,
+          pairResults: evaluated.pairResults,
+        });
+      } catch (err) {
+        console.error("Error checking drug interactions against CSV dataset:", err);
+      } finally {
+        setIsCheckingInteraction(false);
+      }
+    },
+    [basket, clientDdiRecords, applyDdiDataset]
+  );
+
+  // Automatically check interactions when basket or loaded CSV dataset changes
   useEffect(() => {
     if (basket.length < 2) {
       setInteractionResult(null);
       return;
     }
     executeInteractionCheck(basket);
-  }, [basket]);
+  }, [basket, clientDdiRecords, executeInteractionCheck]);
 
   // Add medicine to basket
   const addMedicine = (med: BasketMedicine) => {
@@ -1058,51 +986,38 @@ export const InteractionChecker: React.FC<InteractionCheckerProps> = ({
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  // Pre-computed client basket analysis using active generic ingredient normalization
-  const clientBasketEval = evaluateBasketInteractions(basket);
+  // Pre-computed client basket analysis using the exact same loaded CSV dataset array (clientDdiRecords)
+  const clientBasketEval = useMemo(
+    () => evaluateBasketInteractions(basket, clientDdiRecords),
+    [basket, clientDdiRecords]
+  );
 
   // Pre-computed fallback analysis for batch advice / safer alternatives
   const medicineIds = basket.map((b) => b.id);
   const batchAdvice = analyzeBatchSafety(medicineIds, allMedicines);
 
-  // Unified interaction evaluation: client evaluation runs instantly and is merged with backend API response
-  const hasClientMajor = clientBasketEval.overallSeverity === "Severe" || clientBasketEval.hasRedFlag;
-  const hasClientModerate = clientBasketEval.overallSeverity === "Moderate";
+  // Build unified pairwise cards from clientBasketEval and loaded CSV dataset array
+  const mergedPairCardsMap = new Map<
+    string,
+    {
+      drugAInput: string;
+      drugBInput: string;
+      genericA: string;
+      genericB: string;
+      combinedDrugNames: string;
+      matchedInCsv: boolean;
+      csvDescription?: string;
+      matchDirection?: string;
+      severity: "Severe" | "Moderate" | "Minor" | "None";
+      ruleSeverity?: "HIGH" | "MAJOR" | "MODERATE" | "MINOR" | "NONE";
+      title?: string;
+      plainEnglish: string;
+      safetyGuidance: string;
+      isRedFlag: boolean;
+    }
+  >();
 
-  const hasServerMajor = interactionResult?.severity === "Major" || interactionResult?.overallSeverity === "Severe" || Boolean(interactionResult?.hasRedFlag);
-  const hasServerModerate = interactionResult?.severity === "Moderate" || interactionResult?.overallSeverity === "Moderate";
-
-  const hasMajor = hasClientMajor || hasServerMajor;
-  const hasModerate = !hasMajor && (hasClientModerate || hasServerModerate);
-  const hasMinor = !hasMajor && !hasModerate && (clientBasketEval.overallSeverity === "Minor" || interactionResult?.severity === "Minor");
-
-  const currentSeverity: "Major" | "Moderate" | "Minor" | "None" = hasMajor
-    ? "Major"
-    : hasModerate
-    ? "Moderate"
-    : hasMinor
-    ? "Minor"
-    : "None";
-
-  // Build unified pairwise cards from both client engine and server API response
-  const mergedPairCardsMap = new Map<string, {
-    drugAInput: string;
-    drugBInput: string;
-    genericA: string;
-    genericB: string;
-    combinedDrugNames: string;
-    matchedInCsv: boolean;
-    csvDescription?: string;
-    matchDirection?: string;
-    severity: "Severe" | "Moderate" | "Minor" | "None";
-    ruleSeverity?: "HIGH" | "MAJOR" | "MODERATE" | "MINOR" | "NONE";
-    title?: string;
-    plainEnglish: string;
-    safetyGuidance: string;
-    isRedFlag: boolean;
-  }>();
-
-  // 1. Add all client evaluated pairs
+  // 1. Add all evaluated pairs from clientBasketEval (which already queries clientDdiRecords)
   for (const p of clientBasketEval.pairResults) {
     const key = `${p.genericA.toLowerCase()}||${p.genericB.toLowerCase()}`;
     const reverseKey = `${p.genericB.toLowerCase()}||${p.genericA.toLowerCase()}`;
@@ -1126,7 +1041,7 @@ export const InteractionChecker: React.FC<InteractionCheckerProps> = ({
     }
   }
 
-  // 2. Merge server API response
+  // 2. Merge any additional pairResults from interactionResult
   const serverPairList = interactionResult?.pairResults || interactionResult?.csvMatches || [];
   for (const s of serverPairList) {
     const key = `${s.genericA.toLowerCase()}||${s.genericB.toLowerCase()}`;
@@ -1153,7 +1068,7 @@ export const InteractionChecker: React.FC<InteractionCheckerProps> = ({
     }
   }
 
-  // 3. Cross-reference all basket drug pairs directly against the 11,980 rows from Db_drug_interactions.csv
+  // 3. Cross-reference all basket drug pairs directly against the loaded clientDdiRecords array
   if (clientDdiRecords.length > 0 && basket.length >= 2) {
     for (let i = 0; i < basket.length; i++) {
       for (let j = i + 1; j < basket.length; j++) {
@@ -1169,8 +1084,8 @@ export const InteractionChecker: React.FC<InteractionCheckerProps> = ({
             if (!lowA || !lowB || lowA === lowB) continue;
 
             const row = clientDdiRecords.find((r) => {
-              const d1 = r.drug1.toLowerCase();
-              const d2 = r.drug2.toLowerCase();
+              const d1 = (r.drug1 || r["Drug 1"] || "").toLowerCase();
+              const d2 = (r.drug2 || r["Drug 2"] || "").toLowerCase();
               return (
                 (d1 === lowA && d2 === lowB) ||
                 (d1 === lowB && d2 === lowA) ||
@@ -1180,47 +1095,41 @@ export const InteractionChecker: React.FC<InteractionCheckerProps> = ({
             });
 
             if (row) {
-              const key = `${row.drug1.toLowerCase()}||${row.drug2.toLowerCase()}`;
-              const reverseKey = `${row.drug2.toLowerCase()}||${row.drug1.toLowerCase()}`;
-              const existing = mergedPairCardsMap.get(key) || mergedPairCardsMap.get(reverseKey);
+              const rowD1 = row.drug1 || row["Drug 1"] || rawA;
+              const rowD2 = row.drug2 || row["Drug 2"] || rawB;
+              const rowDesc = row.description || row["Interaction Description"] || "";
+              const interpreted = interpretCsvRowForDisplay(rowD1, rowD2, rowDesc);
 
-              const descLower = row.description.toLowerCase();
-              const isSevere =
-                descLower.includes("increase the cardiotoxic") ||
-                descLower.includes("severe") ||
-                descLower.includes("toxicity") ||
-                descLower.includes("hemorrhage") ||
-                descLower.includes("bleeding") ||
-                descLower.includes("arrhythmia");
-
-              const severityVal: "Severe" | "Moderate" | "Minor" | "None" = isSevere
-                ? "Severe"
-                : "Moderate";
+              const key = `${rowD1.toLowerCase()}||${rowD2.toLowerCase()}`;
+              const reverseKey = `${rowD2.toLowerCase()}||${rowD1.toLowerCase()}`;
+              const existingKey = mergedPairCardsMap.has(key)
+                ? key
+                : mergedPairCardsMap.has(reverseKey)
+                ? reverseKey
+                : null;
+              const existing = existingKey ? mergedPairCardsMap.get(existingKey) : undefined;
 
               if (!existing || existing.severity === "None") {
-                mergedPairCardsMap.set(key, {
+                mergedPairCardsMap.set(existingKey || key, {
                   drugAInput: bA.name,
                   drugBInput: bB.name,
-                  genericA: row.drug1,
-                  genericB: row.drug2,
+                  genericA: rowD1,
+                  genericB: rowD2,
                   combinedDrugNames: `${bA.name} + ${bB.name}`,
                   matchedInCsv: true,
-                  csvDescription: row.description,
-                  matchDirection: `Verified in Db_drug_interactions.csv (${row.drug1} + ${row.drug2})`,
-                  severity: severityVal,
-                  title: isSevere
-                    ? `Severe Risk: ${row.drug1} + ${row.drug2}`
-                    : `Caution Advised: ${row.drug1} + ${row.drug2}`,
-                  plainEnglish: row.description,
-                  safetyGuidance: isSevere
-                    ? "Consult your doctor or pharmacist immediately before taking these medications together."
-                    : "Space doses as advised and monitor closely for side effects.",
-                  isRedFlag: isSevere,
+                  csvDescription: rowDesc,
+                  matchDirection: `Verified in Db_drug_interactions.csv (${rowD1} + ${rowD2})`,
+                  severity: interpreted.severity,
+                  ruleSeverity: interpreted.ruleSeverity,
+                  title: interpreted.title,
+                  plainEnglish: interpreted.plainEnglish,
+                  safetyGuidance: interpreted.safetyGuidance,
+                  isRedFlag: interpreted.isRedFlag,
                 });
               } else {
                 existing.matchedInCsv = true;
                 if (!existing.csvDescription) {
-                  existing.csvDescription = row.description;
+                  existing.csvDescription = rowDesc;
                 }
               }
             }
@@ -1232,28 +1141,66 @@ export const InteractionChecker: React.FC<InteractionCheckerProps> = ({
 
   const pairCards = Array.from(mergedPairCardsMap.values());
 
+  // Unified summary banner calculation derived from the exact same loaded CSV dataset evaluation and pairCards
+  const hasClientMajor =
+    clientBasketEval.overallSeverity === "Severe" ||
+    clientBasketEval.hasRedFlag ||
+    pairCards.some((c) => c.severity === "Severe" || c.isRedFlag);
+  const hasClientModerate =
+    clientBasketEval.overallSeverity === "Moderate" ||
+    pairCards.some((c) => c.severity === "Moderate");
+  const hasClientMinor =
+    clientBasketEval.overallSeverity === "Minor" ||
+    pairCards.some((c) => c.severity === "Minor");
+
+  const hasServerMajor =
+    interactionResult?.severity === "Major" ||
+    interactionResult?.overallSeverity === "Severe" ||
+    Boolean(interactionResult?.hasRedFlag);
+  const hasServerModerate =
+    interactionResult?.severity === "Moderate" ||
+    interactionResult?.overallSeverity === "Moderate";
+  const hasServerMinor =
+    interactionResult?.severity === "Minor" ||
+    interactionResult?.overallSeverity === "Minor";
+
+  const hasMajor = hasClientMajor || hasServerMajor;
+  const hasModerate = !hasMajor && (hasClientModerate || hasServerModerate);
+  const hasMinor = !hasMajor && !hasModerate && (hasClientMinor || hasServerMinor);
+
+  const currentSeverity: "Major" | "Moderate" | "Minor" | "None" = hasMajor
+    ? "Major"
+    : hasModerate
+    ? "Moderate"
+    : hasMinor
+    ? "Minor"
+    : "None";
+
   const activeTitle =
-    (hasMajor || hasModerate)
-      ? (pairCards.find((c) => c.severity === "Severe")?.title ||
-         pairCards.find((c) => c.severity === "Moderate")?.title ||
-         interactionResult?.title ||
-         clientBasketEval.title)
+    hasMajor || hasModerate || hasMinor
+      ? pairCards.find((c) => c.severity === "Severe")?.title ||
+        pairCards.find((c) => c.severity === "Moderate")?.title ||
+        pairCards.find((c) => c.severity === "Minor")?.title ||
+        interactionResult?.title ||
+        clientBasketEval.title
       : "No Adverse Interaction Found • Calm Reassurance";
 
   const activeExplanation =
-    (hasMajor || hasModerate)
-      ? (pairCards.find((c) => c.severity === "Severe")?.plainEnglish ||
-         pairCards.find((c) => c.severity === "Moderate")?.plainEnglish ||
-         interactionResult?.explanation ||
-         clientBasketEval.explanation)
+    hasMajor || hasModerate || hasMinor
+      ? pairCards.find((c) => c.severity === "Severe")?.plainEnglish ||
+        pairCards.find((c) => c.severity === "Moderate")?.plainEnglish ||
+        pairCards.find((c) => c.severity === "Minor")?.plainEnglish ||
+        interactionResult?.explanation ||
+        clientBasketEval.explanation
       : "No harmful drug-drug interactions were found between your selected medicines in the Clinical Knowledge Base. Always follow standard package dosing instructions.";
 
   const activeRecommendation =
-    (hasMajor || hasModerate)
-      ? (pairCards.find((c) => c.severity === "Severe")?.safetyGuidance ||
-         pairCards.find((c) => c.severity === "Moderate")?.safetyGuidance ||
-         interactionResult?.recommendation ||
-         clientBasketEval.recommendation)
+    hasMajor || hasModerate || hasMinor
+      ? pairCards.find((c) => c.severity === "Severe")?.safetyGuidance ||
+        pairCards.find((c) => c.severity === "Moderate")?.safetyGuidance ||
+        pairCards.find((c) => c.severity === "Minor")?.safetyGuidance ||
+        interactionResult?.recommendation ||
+        clientBasketEval.recommendation
       : "Maintain standard individual dosages and take with water.";
 
   return (
@@ -1640,7 +1587,7 @@ export const InteractionChecker: React.FC<InteractionCheckerProps> = ({
           )}
 
           {/* INGREDIENT ANALYSIS CARD */}
-          {interactionResult?.mappedIngredients && interactionResult.mappedIngredients.length > 0 && (
+          {clientBasketEval.mappedIngredients && clientBasketEval.mappedIngredients.length > 0 && (
             <div className="bg-white dark:bg-[#18201C] shadow-sm dark:shadow-xl border border-slate-100 dark:border-white/5 rounded-2xl p-6 space-y-4 transition-colors">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <h3 className="text-base font-serif font-semibold text-slate-900 dark:text-slate-50 flex items-center gap-2">
@@ -1653,7 +1600,7 @@ export const InteractionChecker: React.FC<InteractionCheckerProps> = ({
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {interactionResult.mappedIngredients.map((m, idx) => (
+                {clientBasketEval.mappedIngredients.map((m, idx) => (
                   <div
                     key={idx}
                     className="p-4 rounded-xl bg-slate-50/80 dark:bg-[#121815] border border-slate-100 dark:border-white/5 text-sm space-y-1"
@@ -1803,7 +1750,7 @@ export const InteractionChecker: React.FC<InteractionCheckerProps> = ({
           )}
 
           {/* 🚨 Emergency Care Contacts (If Severe) */}
-          {interactionResult && (interactionResult.hasRedFlag || interactionResult.severity === "Major") && (
+          {hasMajor && (
             <div className="bg-red-50 dark:bg-rose-950/40 border-2 border-red-500 dark:border-rose-500/60 shadow-md rounded-2xl p-6 space-y-3">
               <div className="flex items-center gap-2 text-red-900 dark:text-rose-200 font-bold text-lg">
                 <ShieldAlert className="w-5 h-5 text-red-700 dark:text-rose-300 shrink-0" />
