@@ -15,6 +15,7 @@ import {
   Grid,
 } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
+import { SeraLogo } from "./SeraLogo";
 
 interface HeaderProps {
   onOpenSearch: () => void;

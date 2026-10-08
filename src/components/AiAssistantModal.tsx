@@ -18,10 +18,15 @@ import {
   Trash2,
 } from "lucide-react";
 import { useDataset } from "../context/DatasetContext";
-import { queryGeminiDirect } from "../utils/geminiClient";
+import {
+  queryGeminiDirect,
+  queryGeminiWithLocalRag,
+  retrieveLocalDatabaseData,
+  type LocalRagFallbackData,
+} from "../utils/geminiClient";
 
-// Access Gemini API key with fallback for client/static deployments (e.g., Netlify)
-const apiKey = import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY;
+// Access Gemini API key across all potential environment formats for client/static deployments (e.g., Netlify)
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
 
 interface AiAssistantModalProps {
   isOpen: boolean;
@@ -51,6 +56,8 @@ interface Message {
   content: string;
   retrievedMedicines?: RetrievedMedicine[];
   isAvailableInDataset?: boolean;
+  localFallbackData?: LocalRagFallbackData;
+  usedDeterministicFallback?: boolean;
   timestamp?: string;
 }
 
@@ -187,11 +194,17 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
         throw new Error(`HTTP ${response.status}`);
       }
 
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        throw new Error("Non-JSON response from /api/ai-assistant");
+      }
+
       const data = await response.json();
+      const localData = await retrieveLocalDatabaseData(query);
       const reply =
         data.answer ||
         data.text ||
-        "The requested medicine is unavailable in the SERA knowledge base.";
+        localData.formattedText;
 
       setMessages((prev) => [
         ...prev,
@@ -199,36 +212,39 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
           role: "assistant",
           content: reply,
           retrievedMedicines: data.retrievedMedicines || [],
-          isAvailableInDataset: data.isAvailableInDataset,
+          isAvailableInDataset: data.isAvailableInDataset ?? localData.hasVerifiedData,
+          localFallbackData: localData,
+          usedDeterministicFallback: false,
         },
       ]);
     } catch (err) {
-      // Direct client-side Gemini fallback (e.g., when deployed on static Netlify hosting)
-      if (apiKey) {
-        try {
-          const directReply = await queryGeminiDirect(query);
-          setMessages((prev) => [
-            ...prev,
-            {
-              role: "assistant",
-              content: directReply,
-              isAvailableInDataset: true,
-            },
-          ]);
-          return;
-        } catch (directErr: any) {
-          console.error("Direct Gemini client error:", directErr);
-        }
+      // Client-side RAG with Gemini (if apiKey exists) and automatic deterministic local database fallback
+      try {
+        const ragResult = await queryGeminiWithLocalRag(query);
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: ragResult.answer,
+            isAvailableInDataset: ragResult.localData.hasVerifiedData,
+            localFallbackData: ragResult.localData,
+            usedDeterministicFallback: ragResult.usedDeterministicFallback,
+          },
+        ]);
+      } catch (fallbackErr) {
+        console.error("Local database fallback error:", fallbackErr);
+        const emergencyLocal = await retrieveLocalDatabaseData(query);
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: emergencyLocal.formattedText,
+            isAvailableInDataset: emergencyLocal.hasVerifiedData,
+            localFallbackData: emergencyLocal,
+            usedDeterministicFallback: true,
+          },
+        ]);
       }
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content:
-            "I'm sorry, I encountered an error connecting to the clinical knowledge service. Please check your connection and try again.",
-        },
-      ]);
     } finally {
       setLoading(false);
     }
@@ -376,13 +392,57 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
                     : "bg-white dark:bg-[#1E293B] text-slate-800 dark:text-slate-300 rounded-bl-xs border border-slate-100 dark:border-slate-700/50 shadow-xs"
                 }`}
               >
-                <div
-                  className={`whitespace-pre-wrap font-sans leading-relaxed break-words ${
-                    msg.role === "user" ? "text-white dark:text-slate-100" : "text-slate-800 dark:text-slate-300"
-                  }`}
-                >
-                  {msg.content}
-                </div>
+                {msg.usedDeterministicFallback && msg.localFallbackData ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-100 dark:border-slate-700/50">
+                      <span className="text-xs font-semibold text-emerald-800 dark:text-[#6EE7B7] flex items-center gap-1.5">
+                        <ShieldCheck className="w-4 h-4 shrink-0" />
+                        <span>Verified Local Database Analysis (248k Medicine &amp; DDI Index)</span>
+                      </span>
+                    </div>
+
+                    <div className="bg-slate-50 dark:bg-[#0F172A] p-3 rounded-xl border border-slate-100 dark:border-slate-700/50 space-y-1.5">
+                      <div className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                        Mapped Ingredients (from local DB)
+                      </div>
+                      <ul className="text-xs text-slate-700 dark:text-slate-300 space-y-1 list-disc pl-4">
+                        {msg.localFallbackData.mappedIngredients.map((item, i) => (
+                          <li key={i}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    <div className="bg-amber-50/60 dark:bg-amber-950/20 p-3 rounded-xl border border-amber-200/60 dark:border-amber-500/30 space-y-1.5">
+                      <div className="text-xs font-bold text-slate-900 dark:text-amber-200">
+                        Interaction / Duplicate Hazard Status (from local DB)
+                      </div>
+                      <ul className="text-xs text-slate-800 dark:text-slate-300 space-y-1 list-disc pl-4">
+                        {msg.localFallbackData.interactionHazardStatus.map((item, i) => (
+                          <li key={i}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    <div className="bg-emerald-50/50 dark:bg-emerald-950/20 p-3 rounded-xl border border-emerald-200/60 dark:border-emerald-500/30 space-y-1.5">
+                      <div className="text-xs font-bold text-slate-900 dark:text-[#6EE7B7]">
+                        Precaution / Action (from local DB)
+                      </div>
+                      <ul className="text-xs text-slate-800 dark:text-slate-300 space-y-1 list-disc pl-4">
+                        {msg.localFallbackData.precautionAction.map((item, i) => (
+                          <li key={i}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    className={`whitespace-pre-wrap font-sans leading-relaxed break-words ${
+                      msg.role === "user" ? "text-white dark:text-slate-100" : "text-slate-800 dark:text-slate-300"
+                    }`}
+                  >
+                    {msg.content}
+                  </div>
+                )}
 
                 {/* Retrieved Context Preview Card */}
                 {msg.retrievedMedicines && msg.retrievedMedicines.length > 0 && (

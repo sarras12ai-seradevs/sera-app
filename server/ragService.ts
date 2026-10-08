@@ -11,22 +11,27 @@ import type { MedicineRecord, RetrievalResult } from "./types.ts";
 export const SERA_MANDATORY_DISCLAIMER =
   "SERA provides educational safety guidance grounded in verified medical databases. Always consult a certified doctor or pharmacist for personalized medical advice.";
 
+export const SERA_STRICT_SYSTEM_PROMPT =
+  "You are SERA Clinical Guide. You MUST ONLY use the provided Local Database Results below to answer. If an ingredient or interaction is not listed in the provided data, state 'No verified data found in SERA database'. Do NOT use outside medical knowledge or make assumptions.";
+
 /**
- * Lazy initializer for Gemini client
+ * Lazy initializer for Gemini client.
+ * Checks all possible environment variable names; returns null if undefined or initialization fails.
  */
-export function getGeminiClient(): GoogleGenAI {
-  const apiKey = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+export function getGeminiClient(): GoogleGenAI | null {
+  const apiKey =
+    import.meta.env?.VITE_GEMINI_API_KEY ||
+    process.env.GEMINI_API_KEY ||
+    process.env.VITE_GEMINI_API_KEY;
   if (!apiKey) {
-    throw new Error("GEMINI_API_KEY or VITE_GEMINI_API_KEY environment variable is not configured.");
+    return null;
   }
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        "User-Agent": "aistudio-build",
-      },
-    },
-  });
+  try {
+    return new GoogleGenAI({ apiKey });
+  } catch (err) {
+    console.warn("GoogleGenAI initialization fallback:", err);
+    return null;
+  }
 }
 
 export interface RagResponse {
@@ -208,48 +213,47 @@ ${interactionAnalysis.pairResults
     : `SINGLE DRUG MAPPING:
 - ${mappedDrugs[0]?.displayMapping || userPrompt}`;
 
-  const systemInstruction = `You are SERA (Safety, Education & Risk Awareness), an expert, grounded AI health guidance assistant designed for students and young adults.
+  const systemInstruction = `${SERA_STRICT_SYSTEM_PROMPT}
 
-CRITICAL GROUNDING & ALGORITHM RULES:
-1. Always rely on the provided Brand-to-Generic Mapping and Bidirectional (Permutation-Proof) Search results from db_drug_interactions.csv.
-2. If a multi-ingredient product is named (e.g., Combiflam, Sinarest, Wikoryl, Meftal-Spas, Pan-D), break it down into ALL of its active generic ingredients and evaluate interactions for EACH compound individually.
-3. Treat Match 1 ([Drug 1 == Generic A] AND [Drug 2 == Generic B]) and Match 2 ([Drug 1 == Generic B] AND [Drug 2 == Generic A]) as 100% EQUIVALENT.
-4. Structure EVERY response using these exact headings:
+Structure your grounded response clearly with:
+- Mapped Ingredients (from local DB)
+- Interaction / Duplicate Hazard Status (from local DB)
+- Precaution / Action (from local DB)
 
-🔍 Mapped Ingredients:
-Briefly state the brand-to-generic mapping (e.g., "Crocin contains Paracetamol; Disprin contains Aspirin").
+End with: "${SERA_MANDATORY_DISCLAIMER}"`;
 
-⚠️ Interaction Status:
-State clearly whether an interaction record was retrieved from db_drug_interactions.csv (or if duplicate active ingredients exist).
+  const userContent = `${SERA_STRICT_SYSTEM_PROMPT}
 
-📖 Plain English Explanation:
-Explain the interaction, biological mechanism, uses, and potential risks in simple, non-jargon language suitable for students.
-
-✅ Safety Guidance:
-Provide practical advice (e.g., safe interval timing between doses, food requirements, or warnings against co-administration).
-
-🚨 Red-Flag Emergency Warning (If Severe):
-Include this section if the interaction is marked Severe or if red-flag symptoms like shortness of breath, severe stomach pain, gastrointestinal bleeding, or collapse are described. Display a high-priority warning and list emergency contacts (India: 112 / 108 / AIIMS Poison Control 1800-116-117; US: 911 / Poison Control 1-800-222-1222; UK/EU: 999 / 112).
-
-5. End EVERY response with this exact mandatory disclaimer on its own line:
-"${SERA_MANDATORY_DISCLAIMER}"`;
-
-  const userContent = `User Query: "${userPrompt}"
-
+Local Database Results:
 ${interactionContext}
 
-${medicineContext ? `RETRIEVED MEDICINE RECORDS:\n${medicineContext}` : ""}
+${medicineContext ? `RETRIEVED MEDICINE RECORDS:\n${medicineContext}` : "RETRIEVED MEDICINE RECORDS:\nNo additional medicine records matched."}
 
-Produce the grounded SERA response strictly following the required format.`;
+User Query: "${userPrompt}"`;
 
   try {
     const ai = getGeminiClient();
+    if (!ai) {
+      return {
+        answer: deterministicResponse,
+        retrievedMedicines: retrieved.map((r) => ({
+          name: r.record.name,
+          matchType: r.matchType,
+          score: Math.round(r.score * 100) / 100,
+          record: r.record,
+        })),
+        interactionAnalysis,
+        isAvailableInDataset: true,
+        query: userPrompt,
+      };
+    }
+
     const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
+      model: "gemini-2.5-flash",
       contents: userContent,
       config: {
         systemInstruction,
-        temperature: 0.15,
+        temperature: 0.1,
       },
     });
 

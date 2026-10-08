@@ -1,6 +1,7 @@
 import React from "react";
 import { Link } from "react-router-dom";
-import { Pill, ShieldCheck, Heart, GraduationCap } from "lucide-react";
+import { ShieldCheck, Heart, GraduationCap } from "lucide-react";
+import { SeraLogo } from "./SeraLogo";
 
 interface FooterProps {
   onOpenCredits: () => void;
@@ -13,10 +14,8 @@ export const Footer: React.FC<FooterProps> = ({ onOpenCredits }) => {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-10">
           {/* Brand Info */}
           <div className="md:col-span-2 space-y-4">
-            <Link to="/" className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-emerald-700 dark:bg-emerald-700 text-white dark:text-slate-100 flex items-center justify-center shadow-2xs">
-                <Pill className="w-4 h-4" />
-              </div>
+            <Link to="/" className="flex items-center gap-2.5 group">
+              <SeraLogo className="w-9 h-9 group-hover:scale-105 transition-transform" />
               <div>
                 <span className="text-xl font-sans font-bold text-slate-900 dark:text-slate-100 flex items-baseline gap-1">
                   SERA

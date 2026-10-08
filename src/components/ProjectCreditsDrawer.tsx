@@ -1,5 +1,6 @@
 import React, { useEffect } from "react";
 import { X, Code2, GraduationCap, Sparkles, BookOpen, Layers, ShieldCheck, HeartPulse, ShieldAlert, Activity } from "lucide-react";
+import { SeraLogo } from "./SeraLogo";
 
 interface ProjectCreditsDrawerProps {
   isOpen: boolean;
@@ -26,9 +27,7 @@ export const ProjectCreditsDrawer: React.FC<ProjectCreditsDrawerProps> = ({ isOp
         {/* Header */}
         <div className="p-5 border-b border-slate-100 dark:border-slate-700/50 flex items-center justify-between bg-[#F7F9F7] dark:bg-[#0F172A]">
           <div className="flex items-center gap-2.5">
-            <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-[#34D399]/20 text-emerald-800 dark:text-[#6EE7B7] border border-emerald-100 dark:border-emerald-500/30">
-              <GraduationCap className="w-5 h-5 text-[#3B7A57] dark:text-[#6EE7B7]" />
-            </div>
+            <SeraLogo className="w-10 h-10" />
             <div>
               <h2 className="text-lg font-serif font-semibold text-slate-900 dark:text-slate-100">About SERA</h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">Safety, Education &amp; Risk Awareness</p>
