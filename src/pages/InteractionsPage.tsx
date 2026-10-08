@@ -5,7 +5,7 @@ export type { BasketMedicine, InteractionRecord };
 export { InteractionAnalyzerPage };
 
 interface InteractionsPageProps {
-  onOpenAiAssistant?: (initialPrompt?: string) => void;
+  onOpenAiAssistant?: (initialPrompt?: string, selectedDrugs?: string[]) => void;
 }
 
 export const InteractionsPage: React.FC<InteractionsPageProps> = ({ onOpenAiAssistant }) => {

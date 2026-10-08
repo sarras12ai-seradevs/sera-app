@@ -22,16 +22,19 @@ import {
   queryGeminiDirect,
   queryGeminiWithLocalRag,
   retrieveLocalDatabaseData,
+  isSymptomQuery,
+  buildSymptomFallbackData,
   type LocalRagFallbackData,
 } from "../utils/geminiClient";
 
-// Access Gemini API key across all potential environment formats for client/static deployments (e.g., Netlify)
-const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+// Access Gemini API key in frontend Vite files
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
 
 interface AiAssistantModalProps {
   isOpen: boolean;
   onClose: () => void;
   initialPrompt?: string;
+  initialSelectedDrugs?: string[];
 }
 
 interface RetrievedMedicine {
@@ -58,6 +61,7 @@ interface Message {
   isAvailableInDataset?: boolean;
   localFallbackData?: LocalRagFallbackData;
   usedDeterministicFallback?: boolean;
+  isSymptomQuery?: boolean;
   timestamp?: string;
 }
 
@@ -77,6 +81,71 @@ const DEFAULT_WELCOME_MESSAGE: Message = {
   content:
     "Welcome to SERA (Safety, Education & Risk Awareness) — your grounded AI health guidance assistant for students and young adults.\n\n• Synonym & Brand Mapping: Automatically maps brands (e.g., Crocin, Dolo 650, Disprin, Brufen, Cetzine, Allegra, Pan-D, Ciplox) and multi-ingredient combinations (Combiflam, Sinarest, Wikoryl, Meftal-Spas) to their active generic compounds.\n• Permutation-Proof Clinical Search: Verifies both [Drug 1 == A, Drug 2 == B] and [Drug 1 == B, Drug 2 == A] in the Verified DDI Index.\n\nSERA provides educational safety guidance grounded in verified medical databases. Always consult a certified doctor or pharmacist for personalized medical advice.",
 };
+
+function renderFormattedMarkdown(content: string, isUser: boolean): React.ReactNode {
+  const safeText = typeof content === "string" ? content : String(content ?? "");
+  if (isUser) {
+    return <span className="whitespace-pre-wrap">{safeText}</span>;
+  }
+
+  const formatInline = (line: string): React.ReactNode[] => {
+    const parts = line.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g);
+    return parts.map((part, idx) => {
+      if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+        return (
+          <strong key={idx} className="font-semibold text-slate-900 dark:text-slate-100">
+            {part.slice(2, -2)}
+          </strong>
+        );
+      }
+      if (part.startsWith("*") && part.endsWith("*") && part.length > 2) {
+        return (
+          <em key={idx} className="italic text-slate-700 dark:text-slate-300">
+            {part.slice(1, -1)}
+          </em>
+        );
+      }
+      return part;
+    });
+  };
+
+  const lines = safeText.split("\n");
+  return (
+    <div className="space-y-1.5 font-sans leading-relaxed break-words text-slate-800 dark:text-slate-300">
+      {lines.map((rawLine, idx) => {
+        const line = rawLine.trim();
+        if (!line) {
+          return <div key={idx} className="h-1" />;
+        }
+        if (/^#{1,3}\s+/.test(line)) {
+          const headingText = line.replace(/^#{1,3}\s+/, "");
+          return (
+            <h4
+              key={idx}
+              className="text-sm font-serif font-semibold text-emerald-900 dark:text-[#6EE7B7] pt-2 first:pt-0"
+            >
+              {formatInline(headingText)}
+            </h4>
+          );
+        }
+        if (/^([-*•])\s+/.test(line)) {
+          const bulletText = line.replace(/^([-*•])\s+/, "");
+          return (
+            <div key={idx} className="flex items-start gap-2 pl-1">
+              <span className="text-emerald-700 dark:text-[#6EE7B7] font-bold shrink-0">•</span>
+              <span className="flex-1">{formatInline(bulletText)}</span>
+            </div>
+          );
+        }
+        return (
+          <p key={idx} className="leading-relaxed">
+            {formatInline(rawLine)}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
 
 function loadPersistedMessages(): Message[] {
   if (typeof window === "undefined") return [DEFAULT_WELCOME_MESSAGE];
@@ -106,10 +175,12 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
   isOpen,
   onClose,
   initialPrompt = "",
+  initialSelectedDrugs = [],
 }) => {
   const { indexedRecords, telemetryBanner } = useDataset();
   const [messages, setMessages] = useState<Message[]>(loadPersistedMessages);
   const [input, setInput] = useState(initialPrompt);
+  const [activeSelectedDrugs, setActiveSelectedDrugs] = useState<string[]>(initialSelectedDrugs);
   const [loading, setLoading] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [datasetStats, setDatasetStats] = useState<DatasetStats | null>(null);
@@ -152,7 +223,8 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
     if (initialPrompt) {
       setInput(initialPrompt);
     }
-  }, [initialPrompt]);
+    setActiveSelectedDrugs(Array.isArray(initialSelectedDrugs) ? initialSelectedDrugs : []);
+  }, [initialPrompt, initialSelectedDrugs]);
 
   useEffect(() => {
     if (isOpen) {
@@ -178,16 +250,93 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
     const query = (textToSend || input).trim();
     if (!query || loading) return;
 
+    // Determine whether this query is using the active selected drugs from the Interaction Analyzer
+    const drugsForQuery =
+      !textToSend &&
+      Array.isArray(activeSelectedDrugs) &&
+      activeSelectedDrugs.length > 0 &&
+      !isSymptomQuery(query)
+        ? activeSelectedDrugs
+        : undefined;
+
     const userMessage: Message = { role: "user", content: query };
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
+    setActiveSelectedDrugs([]);
     setLoading(true);
 
+    // 1. INTENT ROUTING: If Symptom Query, bypass local DDI lookup and route directly through Gemini ('gemini-2.5-flash')
+    if (isSymptomQuery(query, drugsForQuery)) {
+      try {
+        let symptomAnswer = "";
+
+        // If client apiKey is configured, route directly through client Gemini ('gemini-2.5-flash')
+        if (apiKey) {
+          const ragResult = await queryGeminiWithLocalRag(query, undefined, undefined);
+          if (typeof ragResult?.answer === "string" && ragResult.answer.trim().length > 0) {
+            symptomAnswer = ragResult.answer.trim();
+          }
+        }
+
+        // Otherwise (or if client call didn't return live text), route through server /api/ai-assistant
+        if (!symptomAnswer) {
+          try {
+            const response = await fetch("/api/ai-assistant", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ prompt: query }),
+            });
+
+            if (response.ok && (response.headers.get("content-type") || "").includes("application/json")) {
+              const data = await response.json();
+              if (typeof data?.answer === "string" && data.answer.trim().length > 0) {
+                symptomAnswer = data.answer.trim();
+              }
+            }
+          } catch {
+            // Fall through to client fallback prose
+          }
+        }
+
+        const finalSymptomReply =
+          symptomAnswer || buildSymptomFallbackData(query).formattedText;
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: String(finalSymptomReply),
+            retrievedMedicines: [],
+            isAvailableInDataset: true,
+            isSymptomQuery: true,
+            usedDeterministicFallback: false,
+          },
+        ]);
+      } catch (symptomErr) {
+        const symptomFallback = buildSymptomFallbackData(query);
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: String(symptomFallback.formattedText),
+            retrievedMedicines: [],
+            isAvailableInDataset: true,
+            isSymptomQuery: true,
+            usedDeterministicFallback: false,
+          },
+        ]);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // 2. MEDICINE INTERACTION QUERY: Run clean entity extraction on drug names ONLY & query DDI dataset
     try {
       const response = await fetch("/api/ai-assistant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: query }),
+        body: JSON.stringify({ prompt: query, selectedDrugs: drugsForQuery }),
       });
 
       if (!response.ok) {
@@ -200,7 +349,30 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
       }
 
       const data = await response.json();
-      const localData = await retrieveLocalDatabaseData(query);
+      const localData = await retrieveLocalDatabaseData(query, drugsForQuery);
+
+      // If the server fell back to deterministic analysis (e.g. server lacks API key), try client-side Gemini synthesis if apiKey is configured
+      if (data?.usedDeterministicFallback && apiKey) {
+        const clientRag = await queryGeminiWithLocalRag(query, undefined, drugsForQuery);
+        const safeClientReply: string =
+          typeof clientRag?.answer === "string" && clientRag.answer.trim().length > 0
+            ? clientRag.answer
+            : localData.formattedText;
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: String(safeClientReply),
+            retrievedMedicines: Array.isArray(data?.retrievedMedicines) ? data.retrievedMedicines : [],
+            isAvailableInDataset: data?.isAvailableInDataset ?? clientRag.localData.hasVerifiedData,
+            localFallbackData: clientRag.localData,
+            usedDeterministicFallback: Boolean(clientRag.usedDeterministicFallback),
+          },
+        ]);
+        return;
+      }
+
       const rawReply =
         typeof data?.answer === "string" && data.answer.trim().length > 0
           ? data.answer
@@ -225,13 +397,13 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
           retrievedMedicines: Array.isArray(data?.retrievedMedicines) ? data.retrievedMedicines : [],
           isAvailableInDataset: data?.isAvailableInDataset ?? localData.hasVerifiedData,
           localFallbackData: localData,
-          usedDeterministicFallback: false,
+          usedDeterministicFallback: Boolean(data?.usedDeterministicFallback),
         },
       ]);
     } catch (err) {
       // Client-side RAG with Gemini (if apiKey exists) and automatic deterministic local database fallback
       try {
-        const ragResult = await queryGeminiWithLocalRag(query);
+        const ragResult = await queryGeminiWithLocalRag(query, undefined, drugsForQuery);
         const safeAnswer: string =
           typeof ragResult?.answer === "string" && ragResult.answer.trim().length > 0
             ? ragResult.answer
@@ -256,7 +428,7 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
         ]);
       } catch (fallbackErr) {
         console.error("Local database fallback error:", fallbackErr);
-        const emergencyLocal = await retrieveLocalDatabaseData(query);
+        const emergencyLocal = await retrieveLocalDatabaseData(query, drugsForQuery);
         const safeEmergencyText: string =
           typeof emergencyLocal?.formattedText === "string" &&
           emergencyLocal.formattedText.trim().length > 0
@@ -425,7 +597,11 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
                     : "bg-white dark:bg-[#1E293B] text-slate-800 dark:text-slate-300 rounded-bl-xs border border-slate-100 dark:border-slate-700/50 shadow-xs"
                 }`}
               >
-                {msg.usedDeterministicFallback && msg.localFallbackData ? (
+                {msg.usedDeterministicFallback &&
+                msg.localFallbackData &&
+                !msg.isSymptomQuery &&
+                !msg.localFallbackData.isSymptomQuery &&
+                !isSymptomQuery(msg.localFallbackData.query || "") ? (
                   <div className="space-y-3">
                     <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-100 dark:border-slate-700/50">
                       <span className="text-xs font-semibold text-emerald-800 dark:text-[#6EE7B7] flex items-center gap-1.5">
@@ -469,18 +645,24 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
                   </div>
                 ) : (
                   <div
-                    className={`whitespace-pre-wrap font-sans leading-relaxed break-words ${
+                    className={`font-sans leading-relaxed break-words ${
                       msg.role === "user" ? "text-white dark:text-slate-100" : "text-slate-800 dark:text-slate-300"
                     }`}
                   >
-                    {typeof msg.content === "string"
-                      ? msg.content
-                      : String(msg.content ?? "No verified data found in SERA database.")}
+                    {renderFormattedMarkdown(
+                      typeof msg.content === "string"
+                        ? msg.content
+                        : String(msg.content ?? "No verified data found in SERA database."),
+                      msg.role === "user"
+                    )}
                   </div>
                 )}
 
                 {/* Retrieved Context Preview Card */}
-                {msg.retrievedMedicines && msg.retrievedMedicines.length > 0 && (
+                {!msg.isSymptomQuery &&
+                  !msg.localFallbackData?.isSymptomQuery &&
+                  msg.retrievedMedicines &&
+                  msg.retrievedMedicines.length > 0 && (
                   <div className="pt-3 border-t border-slate-100 dark:border-slate-700/50 space-y-2">
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">

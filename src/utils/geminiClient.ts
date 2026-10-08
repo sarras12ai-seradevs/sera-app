@@ -1,22 +1,49 @@
 import { GoogleGenAI } from "@google/genai";
 import { fetchAndParseDdiDataset, getCachedDdiRecords, InteractionRecord } from "./ddiDatasetLoader";
-import { evaluateBasketInteractions, extractActiveGenerics } from "./interactionEngine";
+import {
+  evaluateBasketInteractions,
+  extractActiveGenerics,
+  cleanDrugInput,
+  extractCleanDrugEntities,
+} from "./interactionEngine";
 import { allMedicines } from "../data/medicinesData";
+import { symptomsData } from "../data/symptomsData";
 import type { ParsedClientMedicineRecord } from "../context/DatasetContext";
 
-export const GEMINI_PRIMARY_MODEL = "gemini-2.5-flash";
-export const GEMINI_FALLBACK_MODEL = "gemini-1.5-flash";
+export { cleanDrugInput, extractCleanDrugEntities };
+
+export const GEMINI_PRIMARY_MODEL = "gemini-3.8-flash";
+export const GEMINI_FALLBACK_MODEL = "gemini-3.8-pro";
+export const GEMINI_SYMPTOM_MODEL = "gemini-3.8-flash";
 export const GEMINI_CLIENT_MODEL = GEMINI_PRIMARY_MODEL;
 
 export const SERA_STRICT_SYSTEM_PROMPT =
   "You are SERA Clinical Guide. You MUST ONLY use the provided Local Database Results below to answer. If an ingredient or interaction is not listed in the provided data, state 'No verified data found in SERA database'. Do NOT use outside medical knowledge or make assumptions.";
 
+export const SERA_SYMPTOM_SYSTEM_PROMPT = `You are SERA Clinical Guide. The user is asking about symptoms. Answer in warm, empathetic conversational prose using standard Markdown headers and bullet points:
+- Summarize the likely causes of the symptom.
+- List standard over-the-counter active ingredients (e.g., Paracetamol, Ibuprofen) with basic dosage/precaution context.
+- Outline clear home care steps.
+- Highlight crucial 'Red-Flag' warning signs requiring emergency care.
+Do NOT perform drug interaction checks or output raw database mappings.`;
+
 export const SERA_CLINICAL_SYSTEM_INSTRUCTION = SERA_STRICT_SYSTEM_PROMPT;
+
+export interface SymptomOverviewFallback {
+  symptomName: string;
+  category: string;
+  overview: string;
+  otcOptions: string[];
+  homeCarePrecautions: string[];
+  redFlagWarnings: string[];
+}
 
 export interface LocalRagFallbackData {
   query: string;
   hasVerifiedData: boolean;
   isFallback: boolean;
+  isSymptomQuery?: boolean;
+  symptomOverview?: SymptomOverviewFallback;
   ingredients: string[];
   hazards: string[];
   precautions: string[];
@@ -54,6 +81,150 @@ export interface LocalRagFallbackData {
   };
   formattedText: string;
   contextString: string;
+}
+
+/**
+ * Detects whether the user query is a Symptom question rather than a Medicine Interaction question.
+ */
+export function isSymptomQuery(prompt: string, selectedDrugs?: string[]): boolean {
+  if (Array.isArray(selectedDrugs) && selectedDrugs.length > 0) {
+    return false;
+  }
+  const q = (typeof prompt === "string" ? prompt : "").trim();
+  if (!q) return false;
+  const lower = q.toLowerCase();
+
+  // Explicit symptom intent phrases from the Symptom Explorer or natural language
+  if (
+    lower.includes("i am experiencing") ||
+    lower.includes("what otc options") ||
+    lower.includes("fever & chills") ||
+    lower.includes("headache & migraine") ||
+    lower.includes("sore throat & pain") ||
+    lower.includes("cough & chest congestion") ||
+    lower.includes("runny nose & sneezing") ||
+    lower.includes("blocked nose & sinus") ||
+    lower.includes("acidity & heartburn") ||
+    lower.includes("loose stools & diarrhea") ||
+    lower.includes("constipation & hard stools") ||
+    lower.includes("muscle strain & back ache")
+  ) {
+    return true;
+  }
+
+  // If the user explicitly asks to compare/mix two drugs with '+', 'vs', 'interaction between', or 'i am checking', route to medicine interaction
+  if (
+    /\+|interaction between|interactions between|\bvs\b|\bi am checking\b|\bi am taking\b|\bcan i take\b.*\b(and|with)\b/i.test(
+      lower
+    )
+  ) {
+    return false;
+  }
+
+  // Check symptom keywords
+  const symptomKeywords = [
+    "fever & chills",
+    "fever",
+    "chills",
+    "headache",
+    "migraine",
+    "cough",
+    "sore throat",
+    "runny nose",
+    "sneezing",
+    "blocked nose",
+    "sinus",
+    "acidity",
+    "heartburn",
+    "diarrhea",
+    "loose stools",
+    "constipation",
+    "muscle strain",
+    "back ache",
+    "stomach pain",
+    "body ache",
+  ];
+
+  return symptomKeywords.some((kw) => new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(lower));
+}
+
+/**
+ * Builds a structured 'Symptom Overview & Precaution' fallback object from symptomsData and allMedicines.
+ */
+export function buildSymptomFallbackData(prompt: string): LocalRagFallbackData {
+  const safePrompt = typeof prompt === "string" ? prompt : String(prompt || "");
+  const lower = safePrompt.toLowerCase();
+
+  const matchedSymptom =
+    symptomsData.find(
+      (s) =>
+        lower.includes(s.name.toLowerCase()) ||
+        lower.includes(s.id.toLowerCase()) ||
+        s.name
+          .toLowerCase()
+          .split(/\s*&\s*|\s+/)
+          .some((word) => word.length >= 4 && lower.includes(word))
+    ) || symptomsData[0];
+
+  const otcMeds = allMedicines.filter((m) => (matchedSymptom.otcMedicineIds || []).includes(m.id));
+  const otcOptions =
+    otcMeds.length > 0
+      ? otcMeds.map((m) => {
+          const usesList = Array.isArray(m.symptomsRelieved) && m.symptomsRelieved.length > 0
+            ? m.symptomsRelieved.slice(0, 3).join(", ")
+            : m.usage || "Symptom relief";
+          return `${m.name} (${(m.activeIngredients || []).join(" + ") || "OTC"}) — ${usesList}`;
+        })
+      : ["Paracetamol 500mg (Standard OTC relief — follow package instructions)"];
+
+  const homeCarePrecautions = [
+    ...(matchedSymptom.homeRemedies || []),
+    matchedSymptom.hydrationAdvice ? `Hydration: ${matchedSymptom.hydrationAdvice}` : "",
+    matchedSymptom.restRecommendations ? `Rest: ${matchedSymptom.restRecommendations}` : "",
+  ].filter(Boolean);
+
+  const redFlagWarnings =
+    Array.isArray(matchedSymptom.redFlags) && matchedSymptom.redFlags.length > 0
+      ? matchedSymptom.redFlags
+      : ["Seek immediate medical evaluation if symptoms worsen rapidly or persist beyond 3 days."];
+
+  const symptomOverview: SymptomOverviewFallback = {
+    symptomName: matchedSymptom.name,
+    category: matchedSymptom.category,
+    overview: `${matchedSymptom.description} Common triggers include ${(matchedSymptom.commonCauses || []).join(", ")}.`,
+    otcOptions,
+    homeCarePrecautions,
+    redFlagWarnings,
+  };
+
+  const formattedText = [
+    `I'm sorry to hear you're dealing with **${matchedSymptom.name}**. Here is some educational guidance to help you feel better safely:`,
+    `### Likely Causes\n${matchedSymptom.description} It is most commonly triggered by:\n${(matchedSymptom.commonCauses || []).map((c) => `- ${c}`).join("\n")}`,
+    `### Standard Over-the-Counter (OTC) Active Ingredients\n${(otcOptions || []).map((o) => `- ${o}`).join("\n")}\n- *Precaution:* Always check package labels for adult dosing intervals, take NSAIDs (like Ibuprofen or Aspirin) with food, and avoid combining multiple products containing Paracetamol.`,
+    `### Clear Home Care Steps\n${(homeCarePrecautions || []).map((h) => `- ${h}`).join("\n")}`,
+    `### Crucial 'Red-Flag' Warning Signs\nPlease seek immediate medical evaluation if you notice any of the following:\n${(redFlagWarnings || []).map((r) => `- ${r}`).join("\n")}`,
+  ].join("\n\n");
+
+  return {
+    query: safePrompt,
+    hasVerifiedData: true,
+    isFallback: false,
+    isSymptomQuery: true,
+    symptomOverview,
+    ingredients: otcOptions,
+    hazards: redFlagWarnings,
+    precautions: homeCarePrecautions,
+    mappedIngredients: otcOptions,
+    interactionHazardStatus: redFlagWarnings,
+    precautionAction: homeCarePrecautions,
+    rawDatabaseObject: {
+      mappedIngredients: [],
+      medicineDatabase248kMatches: [],
+      ddiInteractionMatches: [],
+    },
+    formattedText,
+    contextString: JSON.stringify(symptomOverview, null, 2),
+  };
 }
 
 /**
@@ -134,11 +305,19 @@ function searchLocal248kMedicines(
     );
     if (matched && !seenNames.has(medNameLower)) {
       seenNames.add(medNameLower);
+      const usesStr =
+        Array.isArray(med.symptomsRelieved) && med.symptomsRelieved.length > 0
+          ? med.symptomsRelieved.join(", ")
+          : med.usage || "None listed";
+      const sideEffectsStr =
+        Array.isArray(med.sideEffects?.common) && med.sideEffects.common.length > 0
+          ? med.sideEffects.common.join(", ")
+          : "None listed";
       results.push({
         id: med.id || med.name,
         name: med.name,
-        uses: (med.primaryUses || []).join(", ") || "None listed",
-        sideEffects: (med.commonSideEffects || []).join(", ") || "None listed",
+        uses: usesStr,
+        sideEffects: sideEffectsStr,
         substitutes: (med.brandNames || []).join(", ") || "None listed",
         therapeuticClass: med.category || "Pharmaceutical",
         chemicalClass: (med.activeIngredients || []).join(" + ") || "None listed",
@@ -192,8 +371,16 @@ function searchLocal248kMedicines(
  * Retrieves deterministic local database records from the 248k medicine dataset and DDI CSV dataset.
  * Never calls any external AI and guarantees zero hallucination and safe string formatting.
  */
-export async function retrieveLocalDatabaseData(prompt: string): Promise<LocalRagFallbackData> {
+export async function retrieveLocalDatabaseData(
+  prompt: string,
+  selectedDrugs?: string[]
+): Promise<LocalRagFallbackData> {
   const safePrompt = typeof prompt === "string" ? prompt : String(prompt || "");
+
+  // Route Symptom Queries to the Symptom Overview & Precaution builder (never treat symptom sentences as drugs)
+  if (isSymptomQuery(safePrompt, selectedDrugs)) {
+    return buildSymptomFallbackData(safePrompt);
+  }
 
   try {
     let ddiRecords: InteractionRecord[] | null = getCachedDdiRecords();
@@ -209,23 +396,14 @@ export async function retrieveLocalDatabaseData(prompt: string): Promise<LocalRa
       if (r?.drug2) ddiDrugSet.add(String(r.drug2).toLowerCase());
     }
 
-    const cleaned = safePrompt
-      .replace(/[?!.:;()]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+    // Use selectedDrugs (from Interaction Analyzer UI state) or cleanDrugInput entity extraction
+    const candidateSegments = extractCleanDrugEntities(safePrompt, selectedDrugs).slice(0, 6);
+    const effectiveSegments =
+      candidateSegments.length > 0
+        ? candidateSegments
+        : [cleanDrugInput(safePrompt) || safePrompt.trim()].filter(Boolean);
 
-    const segments = cleaned
-      .replace(
-        /\b(can i take|what happens if i take|interaction between|interactions between|compare|mix|mixing|combining|combine|taking|is it safe to take|tell me about|what is|uses of|side effects of|along with|together with|together|simultaneously)\b/gi,
-        " | "
-      )
-      .split(/\s*(?:\+|,|\band\b|\bwith\b|\bvs\b|\bor\b|\|)\s*/i)
-      .map((s) => s.trim())
-      .filter((s) => s.length >= 2);
-
-    const candidateSegments = (segments.length > 0 ? segments : [cleaned]).filter(Boolean).slice(0, 5);
-
-    const basketItems = candidateSegments.map((seg) => {
+    const basketItems = effectiveSegments.map((seg) => {
       const extracted = extractActiveGenerics(seg);
       const genericNames = Array.isArray(extracted?.genericNames) ? extracted.genericNames : [];
       const clinicalKeys = Array.isArray(extracted?.clinicalKeys) ? extracted.clinicalKeys : [];
@@ -241,7 +419,7 @@ export async function retrieveLocalDatabaseData(prompt: string): Promise<LocalRa
     });
 
     const allSearchTerms = [
-      ...candidateSegments,
+      ...effectiveSegments,
       ...basketItems.flatMap((b) => (Array.isArray(b.activeIngredients) ? b.activeIngredients : [])),
     ];
 
@@ -302,25 +480,23 @@ export async function retrieveLocalDatabaseData(prompt: string): Promise<LocalRa
       }
     }
 
-    const firstItemIngredients = Array.isArray(basketItems[0]?.activeIngredients)
-      ? basketItems[0].activeIngredients
-      : [];
-    const hasMultipleInputs = basketItems.length >= 2 || firstItemIngredients.length >= 2;
-
-    if (hasMultipleInputs) {
-      const evalInput =
-        basketItems.length >= 2
-          ? basketItems.map((b) => ({
-              name: b.name,
-              activeIngredients: Array.isArray(b.activeIngredients) ? b.activeIngredients : [],
-              therapeuticClass: b.therapeuticClass,
-            }))
-          : firstItemIngredients.map((ing) => ({
+    // Build the cleaned array of active generic compounds for the bidirectional matrix check (A+B, B+A)
+    const cleanedActiveCompoundItems =
+      basketItems.length >= 2
+        ? basketItems.map((b) => ({
+            name: b.name,
+            activeIngredients: Array.isArray(b.activeIngredients) ? b.activeIngredients : [],
+            therapeuticClass: b.therapeuticClass,
+          }))
+        : (Array.isArray(basketItems[0]?.activeIngredients) ? basketItems[0].activeIngredients : []).map(
+            (ing) => ({
               name: ing,
               activeIngredients: [ing],
-            }));
+            })
+          );
 
-      const evalRes = evaluateBasketInteractions(evalInput, safeDdiRecords);
+    if (cleanedActiveCompoundItems.length >= 2) {
+      const evalRes = evaluateBasketInteractions(cleanedActiveCompoundItems, safeDdiRecords);
       const pairResults = Array.isArray(evalRes?.pairResults) ? evalRes.pairResults : [];
 
       for (const pair of pairResults) {
@@ -422,6 +598,7 @@ export async function retrieveLocalDatabaseData(prompt: string): Promise<LocalRa
       query: safePrompt,
       hasVerifiedData,
       isFallback: false,
+      isSymptomQuery: false,
       ingredients: mappedIngredientsLines,
       hazards: interactionStatusLines,
       precautions: precautionActionLines,
@@ -444,6 +621,7 @@ export async function retrieveLocalDatabaseData(prompt: string): Promise<LocalRa
       query: safePrompt,
       hasVerifiedData: false,
       isFallback: true,
+      isSymptomQuery: false,
       ingredients: ["None listed"],
       hazards: ["No duplicate hazards detected"],
       precautions: ["No verified data found in SERA database."],
@@ -462,19 +640,77 @@ export async function retrieveLocalDatabaseData(prompt: string): Promise<LocalRa
 }
 
 /**
- * Full client-side RAG execution with strict grounding, Primary ('gemini-2.5-flash') + Fallback ('gemini-1.5-flash')
- * model initialization, and deterministic local fallback on 503, 404, or network errors.
- * Guaranteed to return a valid string in `answer`.
+ * Full client-side RAG execution with Intent Routing (Symptom vs Medicine):
+ * - For Symptom Queries: Bypasses DDI dataset lookup, calls Gemini ('gemini-2.5-flash') with SERA_SYMPTOM_SYSTEM_PROMPT,
+ *   and falls back to the structured 'Symptom Overview & Precaution' card if Gemini fails.
+ * - For Medicine Queries: Runs clean entity extraction on drug names ONLY, queries Db_drug_interactions.csv
+ *   for bidirectional hazards, synthesizes with Gemini, and preserves the Verified Local Database Analysis fallback.
  */
 export async function queryGeminiWithLocalRag(
   prompt: string,
-  contextSnippet?: string
+  contextSnippet?: string,
+  selectedDrugs?: string[]
 ): Promise<{
   answer: string;
   localData: LocalRagFallbackData;
   usedDeterministicFallback: boolean;
 }> {
-  const localData = await retrieveLocalDatabaseData(prompt);
+  const apiKey =
+    import.meta.env.VITE_GEMINI_API_KEY ||
+    process.env.GEMINI_API_KEY ||
+    process.env.VITE_GEMINI_API_KEY;
+
+  // 1. INTENT ROUTING: Check if this is a Symptom Query
+  if (isSymptomQuery(prompt, selectedDrugs)) {
+    const symptomFallback = buildSymptomFallbackData(prompt);
+
+    try {
+      if (!apiKey) {
+        throw new Error("Missing VITE_GEMINI_API_KEY on client; delegating or using conversational symptom prose.");
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
+      const symptomModels = [GEMINI_PRIMARY_MODEL, GEMINI_FALLBACK_MODEL];
+
+      for (const modelName of symptomModels) {
+        try {
+          const response = await ai.models.generateContent({
+            model: modelName,
+            contents: prompt,
+            config: {
+              systemInstruction: SERA_SYMPTOM_SYSTEM_PROMPT,
+              temperature: 0.3,
+            },
+          });
+
+          const text = typeof response?.text === "string" ? response.text.trim() : "";
+          if (text.length > 0) {
+            symptomFallback.isFallback = false;
+            return {
+              answer: text,
+              localData: symptomFallback,
+              usedDeterministicFallback: false,
+            };
+          }
+        } catch (symptomModelErr) {
+          console.warn(`Symptom query model '${modelName}' failed:`, symptomModelErr);
+        }
+      }
+
+      throw new Error("All client Gemini models failed for symptom query");
+    } catch (err) {
+      console.warn("Client symptom generation fallback:", err);
+      symptomFallback.isFallback = false;
+      return {
+        answer: symptomFallback.formattedText,
+        localData: symptomFallback,
+        usedDeterministicFallback: false,
+      };
+    }
+  }
+
+  // 2. MEDICINE INTERACTION QUERY: Run clean entity extraction and bidirectional DDI lookup
+  const localData = await retrieveLocalDatabaseData(prompt, selectedDrugs);
   const guaranteedFallbackString: string =
     typeof localData?.formattedText === "string" && localData.formattedText.trim().length > 0
       ? localData.formattedText
@@ -484,79 +720,97 @@ export async function queryGeminiWithLocalRag(
           `Precaution / Action (from local DB):\n• ${safeJoin(localData?.precautions, "\n", "Consult a healthcare professional.")}`,
         ].join("\n\n");
 
-  const apiKey =
-    import.meta.env.VITE_GEMINI_API_KEY ||
-    process.env.GEMINI_API_KEY ||
-    process.env.VITE_GEMINI_API_KEY;
-
-  if (!apiKey) {
-    localData.isFallback = true;
-    return {
-      answer: guaranteedFallbackString,
-      localData,
-      usedDeterministicFallback: true,
-    };
-  }
-
   const resolvedContext =
     typeof contextSnippet === "string" && contextSnippet.trim().length > 0
       ? contextSnippet
-      : `${guaranteedFallbackString}\n\nRaw Local Database JSON:\n${localData.contextString || "{}"}`;
+      : [
+          `Mapped Ingredients & Pharmacological Class:\n${(localData?.ingredients || []).join("\n") || "None listed"}`,
+          `Interaction & Duplicate Hazard Status:\n${(localData?.hazards || []).join("\n") || "No duplicate hazards detected"}`,
+          `Precautions & Clinical Actions:\n${(localData?.precautions || []).join("\n") || "None listed"}`,
+          `Raw Local Database Records (248k Medicine DB & DDI CSV):\n${localData.contextString || "{}"}`,
+        ].join("\n\n");
 
-  const groundedPrompt = `${SERA_STRICT_SYSTEM_PROMPT}\n\nLocal Database Results:\n${resolvedContext}\n\nUser Question: ${prompt}`;
+  const systemInstructionWithContext = `${SERA_STRICT_SYSTEM_PROMPT}\n\nSynthesize a natural, helpful clinical response strictly using the following Local Database Results:\n${resolvedContext}`;
 
-  const ai = createGeminiClient();
-  if (!ai) {
-    localData.isFallback = true;
-    return {
-      answer: guaranteedFallbackString,
-      localData,
-      usedDeterministicFallback: true,
-    };
-  }
+  const groundedUserMessage = `${SERA_STRICT_SYSTEM_PROMPT}\n\nLocal Database Results:\n${resolvedContext}\n\nUser Question: ${prompt}\n\nSynthesize a natural clinical response using ONLY the Local Database Results above (covering Mapped Ingredients, Pharmacological Class, Interaction/Duplicate Hazards, and Precautions).`;
 
-  // Try Primary model ('gemini-2.5-flash'), then Fallback model ('gemini-1.5-flash')
-  const candidateModels = [GEMINI_PRIMARY_MODEL, GEMINI_FALLBACK_MODEL];
+  try {
+    if (!apiKey) {
+      throw new Error("VITE_GEMINI_API_KEY is missing; falling back to local database analysis.");
+    }
 
-  for (const modelName of candidateModels) {
+    const ai = new GoogleGenAI({ apiKey });
+
+    // Primary model call: 'gemini-3.8-flash'
     try {
-      const response = await ai.models.generateContent({
-        model: modelName,
-        contents: groundedPrompt,
+      const primaryResponse = await ai.models.generateContent({
+        model: GEMINI_PRIMARY_MODEL, // 'gemini-3.8-flash'
+        contents: groundedUserMessage,
         config: {
-          systemInstruction: SERA_STRICT_SYSTEM_PROMPT,
+          systemInstruction: systemInstructionWithContext,
           temperature: 0.1,
         },
       });
 
-      const text = typeof response?.text === "string" ? response.text.trim() : "";
-      if (text.length > 0) {
+      const primaryText =
+        typeof primaryResponse?.text === "string" ? primaryResponse.text.trim() : "";
+      if (primaryText.length > 0) {
         return {
-          answer: text,
+          answer: primaryText,
           localData,
           usedDeterministicFallback: false,
         };
       }
-    } catch (modelErr) {
-      console.warn(`Gemini model '${modelName}' call failed:`, modelErr);
-    }
-  }
+      throw new Error("Empty response from primary model gemini-3.8-flash");
+    } catch (primaryErr: any) {
+      console.warn(
+        `Primary Gemini model '${GEMINI_PRIMARY_MODEL}' failed (retrying with fallback '${GEMINI_FALLBACK_MODEL}'):`,
+        primaryErr?.status || primaryErr?.message || primaryErr
+      );
 
-  // DETERMINISTIC LOCAL FALLBACK (Zero Hallucination) if both models fail or return empty:
-  localData.isFallback = true;
-  return {
-    answer: guaranteedFallbackString,
-    localData,
-    usedDeterministicFallback: true,
-  };
+      // Automatic retry fallback to 'gemini-3.8-pro' on 503, 404, or primary error
+      const fallbackResponse = await ai.models.generateContent({
+        model: GEMINI_FALLBACK_MODEL, // 'gemini-3.8-pro'
+        contents: groundedUserMessage,
+        config: {
+          systemInstruction: systemInstructionWithContext,
+          temperature: 0.1,
+        },
+      });
+
+      const fallbackText =
+        typeof fallbackResponse?.text === "string" ? fallbackResponse.text.trim() : "";
+      if (fallbackText.length > 0) {
+        return {
+          answer: fallbackText,
+          localData,
+          usedDeterministicFallback: false,
+        };
+      }
+      throw new Error("Empty response from fallback model gemini-3.8-pro");
+    }
+  } catch (err) {
+    // PRESERVE WORKING LOCAL FALLBACK:
+    console.warn("Using Verified Local Database Analysis fallback:", err);
+    localData.isFallback = true;
+    return {
+      answer: guaranteedFallbackString,
+      localData,
+      usedDeterministicFallback: true,
+    };
+  }
 }
 
 /**
  * Direct client-side Gemini generation with grounded RAG context and deterministic local fallback.
  * Guaranteed to return a non-empty valid string.
  */
-export async function queryGeminiDirect(prompt: string, contextSnippet?: string): Promise<string> {
-  const result = await queryGeminiWithLocalRag(prompt, contextSnippet);
+export async function queryGeminiDirect(
+  prompt: string,
+  contextSnippet?: string,
+  selectedDrugs?: string[]
+): Promise<string> {
+  const result = await queryGeminiWithLocalRag(prompt, contextSnippet, selectedDrugs);
   return typeof result?.answer === "string" && result.answer.trim().length > 0
     ? result.answer
     : "No verified data found in SERA database.";

@@ -131,12 +131,16 @@ async function startServer() {
   // RAG Powered AI Assistant Endpoint
   app.post("/api/ai-assistant", async (req, res) => {
     try {
-      const { prompt } = req.body;
+      const { prompt, selectedDrugs } = req.body;
       if (!prompt || typeof prompt !== "string") {
         return res.status(400).json({ error: "Prompt is required" });
       }
 
-      const result = await executeRagQuery(prompt);
+      const safeSelectedDrugs = Array.isArray(selectedDrugs)
+        ? selectedDrugs.map((d) => String(d || "").trim()).filter(Boolean)
+        : undefined;
+
+      const result = await executeRagQuery(prompt, safeSelectedDrugs);
       res.json(result);
     } catch (error: any) {
       console.error("AI Assistant RAG API Error:", error);

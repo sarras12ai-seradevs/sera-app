@@ -66,6 +66,27 @@ export const symptomsData: Symptom[] = [
     ],
   },
   {
+    id: "cough",
+    name: "Cough & Chest Congestion",
+    category: "Throat & Chest",
+    description: "Persistent dry, tickly throat cough or productive chesty cough with phlegm caused by upper respiratory tract irritation, viral cold, or allergies.",
+    iconName: "Activity",
+    commonCauses: ["Viral Common Cold or Bronchitis", "Post-Nasal Drip", "Allergic Airway Irritation", "Dry Air or Smoke Exposure"],
+    otcMedicineIds: ["dextromethorphan-syrup", "ascoril-ls", "strepsils-lozenges", "benzydamine-throat-spray"],
+    homeRemedies: [
+      "Inhale warm steam vapors for 10 minutes twice daily to loosen airway mucus.",
+      "Sip warm water with a teaspoon of raw honey and ginger to coat throat cough receptors.",
+      "Gargle with warm salt water before bedtime to calm throat tickle.",
+    ],
+    hydrationAdvice: "Drink plenty of warm water, herbal teas, and clear broths throughout the day to naturally thin bronchial secretions.",
+    restRecommendations: "Sleep with your head elevated on two pillows to prevent post-nasal drip from triggering nighttime coughing fits.",
+    redFlags: [
+      "Coughing up blood or pink-tinged rusty sputum.",
+      "Shortness of breath, wheezing, or chest pain when breathing.",
+      "Cough lasting more than 2 to 3 weeks accompanied by unexplained weight loss or night sweats.",
+    ],
+  },
+  {
     id: "runny-nose",
     name: "Runny Nose & Sneezing",
     category: "Nasal & Cold",

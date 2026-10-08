@@ -31,13 +31,19 @@ export function AppContent() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [aiAssistantOpen, setAiAssistantOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
+  const [aiSelectedDrugs, setAiSelectedDrugs] = useState<string[]>([]);
   const [creditsOpen, setCreditsOpen] = useState(false);
 
-  const handleOpenAiAssistant = (initialPrompt?: string) => {
+  const handleOpenAiAssistant = (initialPrompt?: string, selectedDrugs?: string[]) => {
     if (initialPrompt) {
       setAiPrompt(initialPrompt);
     } else {
       setAiPrompt("");
+    }
+    if (Array.isArray(selectedDrugs) && selectedDrugs.length > 0) {
+      setAiSelectedDrugs(selectedDrugs);
+    } else {
+      setAiSelectedDrugs([]);
     }
     setAiAssistantOpen(true);
   };
@@ -83,7 +89,7 @@ export function AppContent() {
             path="/interactions"
             element={
               <InteractionsPage
-                onOpenAiAssistant={(p) => handleOpenAiAssistant(p)}
+                onOpenAiAssistant={(p, drugs) => handleOpenAiAssistant(p, drugs)}
               />
             }
           />
@@ -91,7 +97,7 @@ export function AppContent() {
             path="/interaction-analyzer"
             element={
               <InteractionAnalyzerPage
-                onOpenAiAssistant={(p) => handleOpenAiAssistant(p)}
+                onOpenAiAssistant={(p, drugs) => handleOpenAiAssistant(p, drugs)}
               />
             }
           />
@@ -114,6 +120,7 @@ export function AppContent() {
         isOpen={aiAssistantOpen}
         onClose={() => setAiAssistantOpen(false)}
         initialPrompt={aiPrompt}
+        initialSelectedDrugs={aiSelectedDrugs}
       />
 
       <ProjectCreditsDrawer

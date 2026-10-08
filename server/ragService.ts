@@ -14,15 +14,148 @@ export const SERA_MANDATORY_DISCLAIMER =
 export const SERA_STRICT_SYSTEM_PROMPT =
   "You are SERA Clinical Guide. You MUST ONLY use the provided Local Database Results below to answer. If an ingredient or interaction is not listed in the provided data, state 'No verified data found in SERA database'. Do NOT use outside medical knowledge or make assumptions.";
 
+export const SERA_SYMPTOM_SYSTEM_PROMPT = `You are SERA Clinical Guide. The user is asking about symptoms. Answer in warm, empathetic conversational prose using standard Markdown headers and bullet points:
+- Summarize the likely causes of the symptom.
+- List standard over-the-counter active ingredients (e.g., Paracetamol, Ibuprofen) with basic dosage/precaution context.
+- Outline clear home care steps.
+- Highlight crucial 'Red-Flag' warning signs requiring emergency care.
+Do NOT perform drug interaction checks or output raw database mappings.`;
+
+/**
+ * Reusable NLP text pre-processor that strips conversational phrases before entity extraction.
+ */
+export function cleanDrugInput(text: string): string {
+  if (!text || typeof text !== "string") return "";
+  return text
+    .replace(
+      /\b(can i take|is it safe to take|is it safe|what about|with my doctor|ask my doctor|talk to my doctor|discuss with my doctor|my doctor|please explain why|please explain|what safer options|safer options|what otc options|otc options|options|i am checking|i am taking|i am experiencing|what happens if i take|interaction between|interactions between|tell me about|how should i space or manage|these medicines safely|this combination is unsafe|what general dosing tips should i keep in mind|general dosing tips|should i know|precautions|can i discuss)\b/gi,
+      " "
+    )
+    .replace(/[?!.:;"]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Detects whether the user query is a symptom question rather than a drug interaction question.
+ */
+export function isServerSymptomQuery(prompt: string, selectedDrugs?: string[]): boolean {
+  if (Array.isArray(selectedDrugs) && selectedDrugs.length > 0) {
+    return false;
+  }
+  const q = (typeof prompt === "string" ? prompt : "").trim();
+  if (!q) return false;
+  const lower = q.toLowerCase();
+
+  if (
+    lower.includes("i am experiencing") ||
+    lower.includes("what otc options") ||
+    lower.includes("fever & chills") ||
+    lower.includes("headache & migraine") ||
+    lower.includes("sore throat & pain") ||
+    lower.includes("cough & chest congestion") ||
+    lower.includes("runny nose & sneezing") ||
+    lower.includes("blocked nose & sinus") ||
+    lower.includes("acidity & heartburn") ||
+    lower.includes("loose stools & diarrhea") ||
+    lower.includes("constipation & hard stools") ||
+    lower.includes("muscle strain & back ache")
+  ) {
+    return true;
+  }
+
+  if (
+    /\+|interaction between|interactions between|\bvs\b|\bi am checking\b|\bi am taking\b|\bcan i take\b.*\b(and|with)\b/i.test(
+      lower
+    )
+  ) {
+    return false;
+  }
+
+  const symptomKeywords = [
+    "fever & chills",
+    "fever",
+    "chills",
+    "headache",
+    "migraine",
+    "cough",
+    "sore throat",
+    "runny nose",
+    "sneezing",
+    "blocked nose",
+    "sinus",
+    "acidity",
+    "heartburn",
+    "diarrhea",
+    "loose stools",
+    "constipation",
+    "muscle strain",
+    "back ache",
+    "stomach pain",
+    "body ache",
+  ];
+
+  return symptomKeywords.some((kw) => new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(lower));
+}
+
+function buildServerSymptomFallbackText(prompt: string): string {
+  const lower = (prompt || "").toLowerCase();
+  if (lower.includes("fever") || lower.includes("chill")) {
+    return [
+      "I'm sorry to hear you're experiencing **Fever & Chills**. Here is warm, practical guidance to help you manage your symptoms safely:",
+      "### Likely Causes\n- **Viral Flu or Common Cold:** An elevated temperature is your immune system's natural response to fighting off respiratory viruses.\n- **Seasonal Infections or Immune Response:** Can also follow vaccinations, heat exhaustion, or acute bacterial/viral infections.",
+      "### Standard Over-the-Counter (OTC) Active Ingredients\n- **Paracetamol (500mg – 650mg):** First-line option to gently lower fever and ease shivering body aches (take every 4–6 hours as needed; do not exceed 4,000mg in 24 hours).\n- **Ibuprofen (200mg – 400mg):** Helps with fever and muscle inflammation; always take with food or milk to protect your stomach.\n- *Precaution:* Check labels on cold/flu combination tablets so you never accidentally double-dose Paracetamol.",
+      "### Clear Home Care Steps\n- **Stay Hydrated:** Sip water, oral rehydration salts (ORS), coconut water, or clear warm broths frequently to replace fluids lost through sweating.\n- **Rest & Comfort:** Dress in a single layer of light, breathable cotton clothing and rest in a well-ventilated room.\n- **Lukewarm Compress:** Place a cool or lukewarm damp washcloth across your forehead once shivering subsides.",
+      "### Crucial 'Red-Flag' Warning Signs\nSeek immediate emergency medical care if you notice:\n- Fever rising above **103°F (39.4°C)** that does not come down after taking medication.\n- Severe headache with a **stiff neck**, confusion, extreme drowsiness, or sensitivity to bright light.\n- Shortness of breath, persistent vomiting, chest pain, or a fever lasting **more than 3 consecutive days**.",
+      SERA_MANDATORY_DISCLAIMER,
+    ].join("\n\n");
+  }
+  if (lower.includes("headache") || lower.includes("migraine")) {
+    return [
+      "I'm sorry you're dealing with a **Headache or Migraine**. Here is helpful guidance on what may be causing it and how to find relief safely:",
+      "### Likely Causes\n- **Tension, Stress, or Screen Strain:** Prolonged computer or phone use, poor posture, and skipped meals commonly trigger tension headaches.\n- **Dehydration or Sinus Pressure:** Mild fluid loss, lack of sleep, or sinus congestion can cause throbbing forehead or temple pain.",
+      "### Standard Over-the-Counter (OTC) Active Ingredients\n- **Paracetamol (500mg):** Gentle first-line analgesic for tension headaches (allow 4–6 hours between doses).\n- **Ibuprofen (200mg – 400mg) or Aspirin (325mg):** Effective for inflammatory or migraine pain; always take after food with a full glass of water.\n- *Precaution:* Avoid taking multiple painkillers together (especially combining two NSAIDs like Ibuprofen and Aspirin).",
+      "### Clear Home Care Steps\n- **Hydrate Immediately:** Drink two large glasses of water right away.\n- **Dark, Quiet Rest:** Close your eyes in a cool, darkened room away from bright screens for 20–30 minutes.\n- **Cool or Warm Compress:** Apply a cold pack to your forehead or a warm compress to tight neck and shoulder muscles.",
+      "### Crucial 'Red-Flag' Warning Signs\nSeek immediate emergency medical attention if you experience:\n- A sudden, severe **'thunderclap' headache** that reaches maximum pain within seconds or minutes.\n- Headache accompanied by **slurred speech, vision loss, weakness or numbness** on one side, or facial drooping.\n- High fever with a stiff neck, confusion, or a headache following a **head injury**.",
+      SERA_MANDATORY_DISCLAIMER,
+    ].join("\n\n");
+  }
+  if (lower.includes("cough") || lower.includes("throat")) {
+    return [
+      "I'm sorry you're experiencing **Cough or Sore Throat** discomfort. Here is clear guidance to soothe your airway safely:",
+      "### Likely Causes\n- **Upper Respiratory Viral Cold:** Viral inflammation of the throat lining or bronchial airways.\n- **Post-Nasal Drip or Allergies:** Mucus trickling down the back of the throat, dry indoor air, or dust/pollen irritation.",
+      "### Standard Over-the-Counter (OTC) Active Ingredients\n- **Dextromethorphan (10mg – 20mg syrup/lozenge):** Helps calm dry, tickly, non-productive coughs, especially at night.\n- **Guaifenesin or Ambroxol Expectorants:** Best for wet, chesty coughs to thin mucus so it clears more easily.\n- **Benzydamine Throat Spray or Antiseptic Lozenges (Amylmetacresol / Dichlorobenzyl Alcohol):** Soothes raw throat pain.\n- *Precaution:* Do not suppress a heavy wet cough with dry-cough sedatives, and watch for drowsiness.",
+      "### Clear Home Care Steps\n- **Warm Salt-Water Gargle:** Gargle with 1/2 teaspoon of salt in a glass of warm water 3–4 times daily.\n- **Steam & Warm Fluids:** Inhale warm steam vapors and sip warm water or herbal tea with honey and ginger.\n- **Elevate Your Head:** Use an extra pillow when sleeping to reduce nighttime post-nasal drip.",
+      "### Crucial 'Red-Flag' Warning Signs\nSeek urgent medical care if you notice:\n- **Shortness of breath**, difficulty breathing, wheezing, or pain in your chest.\n- **Coughing up blood** or pink-tinged phlegm.\n- Inability to swallow saliva (drooling), severe neck swelling, or a high fever with pus on the tonsils.",
+      SERA_MANDATORY_DISCLAIMER,
+    ].join("\n\n");
+  }
+  if (lower.includes("acidity") || lower.includes("heartburn") || lower.includes("stomach")) {
+    return [
+      "I'm sorry you're feeling uncomfortable with **Acidity & Heartburn**. Here is what typically causes it and how to settle your stomach safely:",
+      "### Likely Causes\n- **Acid Reflux & Dietary Triggers:** Spicy, fried, fatty, or acidic meals, excess caffeine, or eating late at night.\n- **Gastritis or NSAID Irritation:** Taking painkillers on an empty stomach or high stress levels.",
+      "### Standard Over-the-Counter (OTC) Active Ingredients\n- **Antacids (Aluminium Hydroxide + Magnesium Hydroxide + Simethicone):** Neutralize stomach acid and relieve trapped gas within minutes.\n- **Famotidine (10mg – 20mg) or Omeprazole / Pantoprazole (20mg – 40mg):** Reduce acid production (proton pump inhibitors work best when taken 30 minutes before breakfast).\n- *Precaution:* Space antacids at least 2 hours apart from other medications so they don't block absorption.",
+      "### Clear Home Care Steps\n- **Stay Upright After Meals:** Avoid lying down flat for at least 2–3 hours after eating, and elevate the head of your bed slightly.\n- **Eat Smaller, Milder Meals:** Sip lukewarm water or chilled low-fat milk and avoid spicy foods, soda, coffee, and alcohol.",
+      "### Crucial 'Red-Flag' Warning Signs\nSeek emergency medical care immediately if you experience:\n- **Crushing or squeezing chest pain** radiating to your jaw, neck, back, or left arm (can mimic a heart attack).\n- **Vomiting blood** or dark material that looks like coffee grounds, or passing **black, tarry stools**.\n- Painful or blocked swallowing, persistent vomiting, or unexplained weight loss.",
+      SERA_MANDATORY_DISCLAIMER,
+    ].join("\n\n");
+  }
+  return [
+    `I'm sorry to hear you're feeling unwell. Here is helpful educational guidance regarding your symptoms:`,
+    "### Likely Causes\n- Common acute symptoms are frequently triggered by self-limiting viral infections, mild dehydration, dietary changes, environmental allergens, or physical fatigue.",
+    "### Standard Over-the-Counter (OTC) Active Ingredients\n- **Paracetamol (500mg):** Standard option for fever or mild-to-moderate pain (keep doses 4–6 hours apart).\n- **Cetirizine (10mg) or Fexofenadine (120mg):** Standard antihistamines for sneezing, runny nose, or mild allergy symptoms.\n- **Oral Rehydration Salts (ORS) / Antacids:** Useful for digestive upset or fluid replacement.\n- *Precaution:* Always choose a single-ingredient product matched to your main symptom and read the package dosing label carefully.",
+    "### Clear Home Care Steps\n- **Hydration:** Drink plenty of water, clear soups, or electrolyte solutions throughout the day.\n- **Rest:** Give your body adequate sleep and avoid strenuous activity while recovering.",
+    "### Crucial 'Red-Flag' Warning Signs\nSeek immediate medical attention if you experience:\n- Difficulty breathing, chest pain, severe dizziness, confusion, or inability to keep fluids down.\n- High fever above **103°F (39.4°C)** or symptoms that worsen rapidly or persist beyond **3 days**.",
+    SERA_MANDATORY_DISCLAIMER,
+  ].join("\n\n");
+}
+
 /**
  * Lazy initializer for Gemini client.
  * Checks all possible environment variable names; returns null if undefined or initialization fails.
  */
 export function getGeminiClient(): GoogleGenAI | null {
-  const apiKey =
-    import.meta.env?.VITE_GEMINI_API_KEY ||
-    process.env.GEMINI_API_KEY ||
-    process.env.VITE_GEMINI_API_KEY;
+  const apiKey = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return null;
   }
@@ -44,26 +177,27 @@ export interface RagResponse {
   }>;
   interactionAnalysis?: SeraInteractionLookupResult;
   isAvailableInDataset: boolean;
+  usedDeterministicFallback?: boolean;
+  isSymptomQuery?: boolean;
   query: string;
 }
 
 /**
  * Extract drug names from a natural language query (supports single or multi-drug queries)
  */
-export function extractDrugsFromQuery(prompt: string): string[] {
-  const cleaned = prompt
-    .replace(/[?!.:;()]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+export function extractDrugsFromQuery(prompt: string, selectedDrugs?: string[]): string[] {
+  if (Array.isArray(selectedDrugs) && selectedDrugs.length > 0) {
+    const valid = selectedDrugs.map((d) => String(d || "").trim()).filter((d) => d.length >= 2);
+    if (valid.length > 0) return valid;
+  }
+
+  const cleaned = cleanDrugInput(prompt);
 
   // Check if user separated drugs with "+", "and", "with", "vs", "or", ","
   const splitByConnectors = cleaned
-    .replace(
-      /\b(can i take|what happens if i take|interaction between|interactions between|compare|mix|mixing|combining|combine|taking|is it safe to take|tell me about|what is|uses of|side effects of|along with|together with|together|simultaneously)\b/gi,
-      " | "
-    )
-    .split(/\s*(?:\+|,|\band\b|\bwith\b|\bvs\b|\bor\b|\|)\s*/i)
-    .map((s) => s.trim())
+    .split(/\s*(?:\+|,|\band\b|\bwith\b|\bvs\b|\bor\b|\||&)\s*/i)
+    .map((s) => cleanDrugInput(s))
+    .map((s) => s.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9)]+$/g, "").trim())
     .filter((s) => s.length >= 2);
 
   const knownPhraseCandidates: string[] = [];
@@ -91,7 +225,7 @@ export function extractDrugsFromQuery(prompt: string): string[] {
     }
   }
 
-  return unique.length > 0 ? unique : [cleaned];
+  return unique.length > 0 ? unique : [cleaned || prompt.trim()];
 }
 
 /**
@@ -130,8 +264,73 @@ function extractPotentialDrugTerms(prompt: string): string[] {
  * 4. Retrieve Medicine Knowledge Base records.
  * 5. Format response strictly with SERA's 5 sections + Mandatory Disclaimer (using Gemini 3.8 Flash with instant deterministic fallback if quota exceeded).
  */
-export async function executeRagQuery(userPrompt: string): Promise<RagResponse> {
-  const extractedDrugs = extractDrugsFromQuery(userPrompt);
+export async function executeRagQuery(
+  userPrompt: string,
+  selectedDrugs?: string[]
+): Promise<RagResponse> {
+  // 1. INTENT ROUTING (Symptom vs Medicine):
+  // If the user query is a symptom question, bypass the local drug-interaction dataset lookup entirely.
+  if (isServerSymptomQuery(userPrompt, selectedDrugs)) {
+    const symptomFallbackText = buildServerSymptomFallbackText(userPrompt);
+    try {
+      const ai = getGeminiClient();
+      if (!ai) {
+        throw new Error("Gemini API key is missing on server; using Symptom Overview & Precaution fallback.");
+      }
+
+      const symptomModels = ["gemini-3.8-flash", "gemini-3.8-pro"];
+      let answerText = "";
+      for (const modelName of symptomModels) {
+        try {
+          const response = await ai.models.generateContent({
+            model: modelName,
+            contents: userPrompt,
+            config: {
+              systemInstruction: SERA_SYMPTOM_SYSTEM_PROMPT,
+              temperature: 0.3,
+            },
+          });
+          if (typeof response?.text === "string" && response.text.trim().length > 0) {
+            answerText = response.text.trim();
+            break;
+          }
+        } catch (symptomErr: any) {
+          console.warn(`Server symptom model '${modelName}' failed:`, symptomErr?.message || symptomErr);
+        }
+      }
+
+      if (!answerText) {
+        throw new Error("All Gemini models failed for symptom query");
+      }
+
+      if (!answerText.includes(SERA_MANDATORY_DISCLAIMER)) {
+        answerText = `${answerText}\n\n${SERA_MANDATORY_DISCLAIMER}`;
+      }
+
+      return {
+        answer: String(answerText),
+        retrievedMedicines: [],
+        isAvailableInDataset: true,
+        usedDeterministicFallback: false,
+        isSymptomQuery: true,
+        query: userPrompt,
+      };
+    } catch (err: any) {
+      console.warn("Server symptom generation fallback:", err?.message || err);
+      return {
+        answer: String(symptomFallbackText),
+        retrievedMedicines: [],
+        isAvailableInDataset: true,
+        usedDeterministicFallback: false,
+        isSymptomQuery: true,
+        query: userPrompt,
+      };
+    }
+  }
+
+  // 2. MEDICINE INTERACTION QUERIES:
+  // Run clean entity extraction on the drug names ONLY, and query db_drug_interactions.csv for bidirectional hazards
+  const extractedDrugs = extractDrugsFromQuery(userPrompt, selectedDrugs);
   const mappedDrugs = extractedDrugs.map((d) => mapDrugToGenerics(d));
 
   // Also search Medicine Knowledge Engine for both raw terms and mapped generic ingredients
@@ -234,29 +433,18 @@ User Query: "${userPrompt}"`;
   try {
     const ai = getGeminiClient();
     if (!ai) {
-      return {
-        answer: String(deterministicResponse || "No verified data found in SERA database."),
-        retrievedMedicines: (retrieved || []).map((r) => ({
-          name: r.record.name,
-          matchType: r.matchType,
-          score: Math.round(r.score * 100) / 100,
-          record: r.record,
-        })),
-        interactionAnalysis,
-        isAvailableInDataset: true,
-        query: userPrompt,
-      };
+      throw new Error("Gemini API key is missing on server; using local database fallback.");
     }
 
     let answerText = "";
-    const candidateModels = ["gemini-2.5-flash", "gemini-1.5-flash"];
+    const candidateModels = ["gemini-3.8-flash", "gemini-3.8-pro"];
     for (const modelName of candidateModels) {
       try {
         const response = await ai.models.generateContent({
           model: modelName,
           contents: userContent,
           config: {
-            systemInstruction,
+            systemInstruction: `${systemInstruction}\n\nLocal Database Results:\n${interactionContext}\n\n${medicineContext}`,
             temperature: 0.1,
           },
         });
@@ -265,13 +453,15 @@ User Query: "${userPrompt}"`;
           break;
         }
       } catch (modelErr: any) {
-        console.warn(`Server Gemini model '${modelName}' fallback:`, modelErr?.message || modelErr);
+        console.warn(`Server Gemini model '${modelName}' retry fallback:`, modelErr?.message || modelErr);
       }
     }
 
     if (!answerText) {
-      answerText = String(deterministicResponse || "No verified data found in SERA database.");
-    } else if (!answerText.includes(SERA_MANDATORY_DISCLAIMER)) {
+      throw new Error("All Gemini models returned empty or failed; falling back to local database.");
+    }
+
+    if (!answerText.includes(SERA_MANDATORY_DISCLAIMER)) {
       answerText = `${answerText}\n\n${SERA_MANDATORY_DISCLAIMER}`;
     }
 
@@ -285,10 +475,11 @@ User Query: "${userPrompt}"`;
       })),
       interactionAnalysis,
       isAvailableInDataset: true,
+      usedDeterministicFallback: false,
       query: userPrompt,
     };
   } catch (err: any) {
-    // Graceful fallback if Gemini API hits quota limit (429 / resource_exhausted) or network error
+    // Graceful fallback if Gemini API hits 503, 404, quota limit, or network error
     console.warn("Using grounded deterministic SERA response (Gemini API fallback):", err?.message || err);
 
     return {
@@ -301,6 +492,7 @@ User Query: "${userPrompt}"`;
       })),
       interactionAnalysis,
       isAvailableInDataset: true,
+      usedDeterministicFallback: true,
       query: userPrompt,
     };
   }

@@ -43,7 +43,7 @@ import {
 } from "./SeverityBarChart";
 
 export interface InteractionCheckerProps {
-  onOpenAiAssistant?: (initialPrompt?: string) => void;
+  onOpenAiAssistant?: (initialPrompt?: string, selectedDrugs?: string[]) => void;
   initialDdiRecords?: InteractionRecord[];
   useDdiOnly?: boolean;
 }
@@ -1480,7 +1480,8 @@ export const InteractionChecker: React.FC<InteractionCheckerProps> = ({
                     type="button"
                     onClick={() =>
                       onOpenAiAssistant(
-                        `I am checking ${basket.map((m) => m.name).join(" and ")}. Please explain why this combination is unsafe and what safer options I can discuss with my doctor.`
+                        `I am checking ${basket.map((m) => m.name).join(" and ")}. Please explain why this combination is unsafe and what safer options I can discuss with my doctor.`,
+                        basket.map((d) => d.name)
                       )
                     }
                     className="px-4 py-2.5 rounded-full bg-white dark:bg-[#18201C] hover:bg-red-100 dark:hover:bg-rose-950/80 text-red-900 dark:text-rose-200 border border-red-300 dark:border-rose-500/50 text-xs font-semibold flex items-center gap-1.5 shrink-0 transition-colors shadow-2xs cursor-pointer"
@@ -1526,7 +1527,8 @@ export const InteractionChecker: React.FC<InteractionCheckerProps> = ({
                     type="button"
                     onClick={() =>
                       onOpenAiAssistant(
-                        `I am checking ${basket.map((m) => m.name).join(" and ")}. How should I space or manage these medicines safely?`
+                        `I am checking ${basket.map((m) => m.name).join(" and ")}. How should I space or manage these medicines safely?`,
+                        basket.map((d) => d.name)
                       )
                     }
                     className="px-4 py-2.5 rounded-full bg-white dark:bg-[#18201C] hover:bg-amber-100 dark:hover:bg-amber-950/60 text-amber-950 dark:text-amber-200 border border-amber-300 dark:border-amber-500/40 text-xs font-semibold flex items-center gap-1.5 shrink-0 transition-colors shadow-2xs cursor-pointer"
@@ -1574,7 +1576,8 @@ export const InteractionChecker: React.FC<InteractionCheckerProps> = ({
                   type="button"
                   onClick={() =>
                     onOpenAiAssistant(
-                      `I am taking ${basket.map((m) => m.name).join(" and ")}. What general dosing tips should I keep in mind?`
+                      `I am taking ${basket.map((m) => m.name).join(" and ")}. What general dosing tips should I keep in mind?`,
+                      basket.map((d) => d.name)
                     )
                   }
                   className="px-4 py-2.5 rounded-full bg-emerald-700 hover:bg-emerald-800 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-slate-950 text-xs font-semibold flex items-center gap-1.5 shrink-0 transition-colors shadow-2xs cursor-pointer"

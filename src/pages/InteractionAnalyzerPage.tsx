@@ -16,7 +16,7 @@ export type { BasketMedicine, SeverityChartItem, InteractionRecord };
 export { SeverityBarChart, aggregateSeverityCounts };
 
 interface InteractionAnalyzerPageProps {
-  onOpenAiAssistant?: (initialPrompt?: string) => void;
+  onOpenAiAssistant?: (initialPrompt?: string, selectedDrugs?: string[]) => void;
 }
 
 export const InteractionAnalyzerPage: React.FC<InteractionAnalyzerPageProps> = ({

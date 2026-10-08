@@ -609,6 +609,170 @@ export function getCanonicalDisplayName(clinicalKey: string): string {
 }
 
 /**
+ * Global NLP Cleaning Function:
+ * Strips common conversational phrases ('can I take', 'is it safe', 'what about', 'my doctor',
+ * 'please explain', 'options', etc.) before running trigram/entity search.
+ */
+export function cleanDrugInput(text: string): string {
+  if (!text || typeof text !== "string") return "";
+
+  // 1. Strip conversational follow-up sentences that do not contain drug names
+  let cleaned = text
+    .replace(
+      /\b(please explain why this combination is unsafe[^.?!]*|what safer options[^.?!]*|how should i space or manage[^.?!]*|what general dosing tips[^.?!]*|what otc options or precautions should i know[^.?!]*)/gi,
+      " "
+    )
+    // 2. Replace common conversational phrases with a segment separator
+    .replace(
+      /\b(can i take|is it safe to take|is it safe|what happens if i take|what about|with my doctor|discuss with my doctor|my doctor|my pharmacist|please explain|why this combination is unsafe|what safer options|safer options|options|how should i space or manage|these medicines safely|general dosing tips|keep in mind|i am checking|i am taking|i am experiencing|what otc options|interaction between|interactions between|tell me about|what is the interaction|side effects of|uses of|what is|along with|together with|at the same time|simultaneously|compare|mixing|combining|combine|mix)\b/gi,
+      " | "
+    );
+
+  // 3. Remove leftover conversational stop words while preserving drug names and delimiters
+  cleaned = cleaned
+    .replace(/[?!.:;]/g, " | ")
+    .replace(
+      /\b(please|explain|why|this|combination|unsafe|what|safer|option|options|can|discuss|my|doctor|pharmacist|how|should|space|manage|these|medicines|medications|safely|general|dosing|tips|keep|mind|checking|taking|experiencing|safe|take|about|for|me|i|am|is|it|to|the|a|an|in|on|of|precautions|know)\b/gi,
+      " "
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return cleaned;
+}
+
+/**
+ * Character-level trigram Dice similarity for fuzzy matching drug names against Db_drug_interactions.csv
+ */
+export function computeTrigramSimilarity(a: string, b: string): number {
+  const s1 = `  ${(a || "").toLowerCase().trim()}  `;
+  const s2 = `  ${(b || "").toLowerCase().trim()}  `;
+  if (s1 === s2) return 1;
+  if (s1.length < 3 || s2.length < 3) return 0;
+
+  const trigrams1 = new Map<string, number>();
+  for (let i = 0; i <= s1.length - 3; i++) {
+    const tg = s1.slice(i, i + 3);
+    trigrams1.set(tg, (trigrams1.get(tg) || 0) + 1);
+  }
+
+  let intersection = 0;
+  const total2 = s2.length - 2;
+  for (let i = 0; i <= s2.length - 3; i++) {
+    const tg = s2.slice(i, i + 3);
+    const count = trigrams1.get(tg) || 0;
+    if (count > 0) {
+      intersection++;
+      trigrams1.set(tg, count - 1);
+    }
+  }
+
+  const total1 = s1.length - 2;
+  return (2 * intersection) / (total1 + total2);
+}
+
+let cachedUniqueDdiDrugNames: string[] = [];
+let cachedUniqueDdiSourceLen = 0;
+
+function getUniqueDdiDrugNames(ddiRecords: InteractionRecord[]): string[] {
+  if (!ddiRecords || ddiRecords.length === 0) return [];
+  if (cachedUniqueDdiDrugNames.length > 0 && cachedUniqueDdiSourceLen === ddiRecords.length) {
+    return cachedUniqueDdiDrugNames;
+  }
+  const set = new Set<string>();
+  for (let i = 0; i < ddiRecords.length; i++) {
+    const r = ddiRecords[i];
+    const d1 = (r?.drug1 || r?.["Drug 1"] || "").trim();
+    const d2 = (r?.drug2 || r?.["Drug 2"] || "").trim();
+    if (d1) set.add(d1);
+    if (d2) set.add(d2);
+  }
+  cachedUniqueDdiDrugNames = Array.from(set);
+  cachedUniqueDdiSourceLen = ddiRecords.length;
+  return cachedUniqueDdiDrugNames;
+}
+
+/**
+ * Matches a cleaned drug candidate against the DDI CSV drug dictionary using exact, parenthetical, or trigram similarity
+ */
+export function matchDrugInDdiDictionary(
+  candidate: string,
+  ddiRecords: InteractionRecord[] = getCachedDdiRecords() || []
+): string | null {
+  const clean = (candidate || "")
+    .replace(/\b(\d+(\.\d+)?\s*(mg|mcg|g|ml|iu|%)|tablet|tablets|capsule|capsules|syrup|liquid|soluble|low-dose|oral|effervescent)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!clean || clean.length < 2) return null;
+
+  const uniqueDrugs = getUniqueDdiDrugNames(ddiRecords);
+  if (uniqueDrugs.length === 0) return null;
+
+  const lowerClean = clean.toLowerCase();
+  const parenInner = clean.match(/\(([^)]+)\)/)?.[1]?.trim().toLowerCase() || "";
+  const outsideParen = clean.replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+
+  // 1. Exact match on full, parenthetical, or outside-parenthesis token
+  for (const d of uniqueDrugs) {
+    const dLower = d.toLowerCase();
+    if (dLower === lowerClean || (parenInner && dLower === parenInner) || (outsideParen && dLower === outsideParen)) {
+      return d;
+    }
+  }
+
+  // 2. Trigram similarity search
+  const target = outsideParen.length >= 3 ? outsideParen : lowerClean;
+  if (target.length < 3) return null;
+
+  let bestDrug: string | null = null;
+  let bestScore = 0.58; // threshold to avoid false positives on non-drug words
+
+  for (const d of uniqueDrugs) {
+    const score = computeTrigramSimilarity(target, d.toLowerCase());
+    if (score > bestScore) {
+      bestScore = score;
+      bestDrug = d;
+    }
+  }
+
+  return bestDrug;
+}
+
+/**
+ * Extracts clean drug entities from either an explicit selectedDrugs array (UI state)
+ * or a natural-language user prompt pre-processed with cleanDrugInput(text).
+ */
+export function extractCleanDrugEntities(
+  text: string,
+  explicitSelectedDrugs?: string[]
+): string[] {
+  if (Array.isArray(explicitSelectedDrugs) && explicitSelectedDrugs.length > 0) {
+    const validSelected = explicitSelectedDrugs
+      .map((d) => (typeof d === "string" ? d.trim() : ""))
+      .filter((d) => d.length >= 2);
+    if (validSelected.length > 0) {
+      return validSelected;
+    }
+  }
+
+  const cleanedText = cleanDrugInput(text);
+  const rawSegments = cleanedText
+    .split(/\s*(?:\+|,|\band\b|\bwith\b|\bvs\b|\bor\b|\||&)\s*/i)
+    .map((s) => cleanDrugInput(s))
+    .map((s) => s.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9)]+$/g, "").trim())
+    .filter((s) => s.length >= 2);
+
+  const deduplicated: string[] = [];
+  for (const seg of rawSegments) {
+    if (!deduplicated.some((existing) => existing.toLowerCase() === seg.toLowerCase())) {
+      deduplicated.push(seg);
+    }
+  }
+
+  return deduplicated;
+}
+
+/**
  * Extracts and normalizes active generic ingredients from any medicine name, ID, or BasketMedicine object
  */
 export function extractActiveGenerics(
@@ -621,7 +785,8 @@ export function extractActiveGenerics(
   displayMapping: string;
 } {
   const raw = (inputNameOrId || "").trim();
-  const lowerRaw = raw.toLowerCase();
+  const cleanedRaw = cleanDrugInput(raw) || raw;
+  const lowerRaw = cleanedRaw.toLowerCase();
   const stripped = lowerRaw
     .replace(/\b(\d+(\.\d+)?\s*(mg|mcg|g|ml|iu|%)|tablet|tablets|capsule|capsules|syrup|liquid|soluble|low-dose|oral|effervescent)\b/gi, " ")
     .replace(/[^\w\s+-]/g, " ")
@@ -713,8 +878,20 @@ export function extractActiveGenerics(
     }
   }
 
-  // 4. Fallback: normalize raw string directly
-  const fallbackKey = normalizeToClinicalKey(raw);
+  // 4. Fallback: check DDI dictionary (exact/parenthetical/trigram) then normalize
+  const ddiMatchedDrug = matchDrugInDdiDictionary(cleanedRaw);
+  if (ddiMatchedDrug) {
+    const ddiKey = normalizeToClinicalKey(ddiMatchedDrug);
+    const ddiDisplayName = getCanonicalDisplayName(ddiKey) || ddiMatchedDrug;
+    return {
+      genericNames: [ddiMatchedDrug],
+      clinicalKeys: [ddiKey],
+      category: "Active Generic Compound",
+      displayMapping: `${raw} → ${ddiDisplayName}`,
+    };
+  }
+
+  const fallbackKey = normalizeToClinicalKey(cleanedRaw);
   const fallbackName = getCanonicalDisplayName(fallbackKey);
   return {
     genericNames: [fallbackName],
