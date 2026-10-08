@@ -180,27 +180,27 @@ export async function executeRagQuery(userPrompt: string): Promise<RagResponse> 
     ? interactionAnalysis.formattedResponse
     : formatSingleDrugSeraResponse(mappedDrugs[0], retrieved[0]?.record, userPrompt);
 
-  // Build grounded context for Gemini
-  const medicineContext = retrieved
+  // Build grounded context for Gemini with defensive array checks
+  const medicineContext = (retrieved || [])
     .map((r, idx) => {
-      const rec = r.record;
+      const rec = r?.record;
       return `[MEDICINE RECORD ${idx + 1}]
-Name: ${rec.name}
-Uses: ${rec.uses.join(", ") || "Not specified"}
-Side Effects: ${rec.sideEffects.join(", ") || "Not specified"}
-Chemical Class: ${rec.chemicalClass || "Not specified"}
-Therapeutic Class: ${rec.therapeuticClass || "Not specified"}
-Action Class: ${rec.actionClass || "Not specified"}
-Substitutes: ${rec.substitutes.join(", ") || "Not specified"}`;
+Name: ${rec?.name || "None listed"}
+Uses: ${(rec?.uses || []).join(", ") || "None listed"}
+Side Effects: ${(rec?.sideEffects || []).join(", ") || "None listed"}
+Chemical Class: ${rec?.chemicalClass || "Not specified"}
+Therapeutic Class: ${rec?.therapeuticClass || "Not specified"}
+Action Class: ${rec?.actionClass || "Not specified"}
+Substitutes: ${(rec?.substitutes || []).join(", ") || "None listed"}`;
     })
     .join("\n\n");
 
   const interactionContext = interactionAnalysis
     ? `BIDIRECTIONAL CSV INTERACTION LOOKUP RESULTS (db_drug_interactions.csv):
 Mapped Drugs:
-${interactionAnalysis.mappedDrugs.map((m) => `- ${m.displayMapping}`).join("\n")}
+${(interactionAnalysis.mappedDrugs || []).map((m) => `- ${m.displayMapping}`).join("\n") || "None listed"}
 Pairwise Bidirectional Results:
-${interactionAnalysis.pairResults
+${(interactionAnalysis.pairResults || [])
   .map(
     (p) =>
       `- ${p.genericA} + ${p.genericB}: Matched=${p.matchedInCsv}, Direction=${
@@ -209,7 +209,7 @@ ${interactionAnalysis.pairResults
         p.csvRow?.description || "No interaction record in db_drug_interactions.csv"
       }"`
   )
-  .join("\n")}`
+  .join("\n") || "No duplicate hazards detected"}`
     : `SINGLE DRUG MAPPING:
 - ${mappedDrugs[0]?.displayMapping || userPrompt}`;
 
@@ -235,8 +235,8 @@ User Query: "${userPrompt}"`;
     const ai = getGeminiClient();
     if (!ai) {
       return {
-        answer: deterministicResponse,
-        retrievedMedicines: retrieved.map((r) => ({
+        answer: String(deterministicResponse || "No verified data found in SERA database."),
+        retrievedMedicines: (retrieved || []).map((r) => ({
           name: r.record.name,
           matchType: r.matchType,
           score: Math.round(r.score * 100) / 100,
@@ -248,25 +248,36 @@ User Query: "${userPrompt}"`;
       };
     }
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: userContent,
-      config: {
-        systemInstruction,
-        temperature: 0.1,
-      },
-    });
+    let answerText = "";
+    const candidateModels = ["gemini-2.5-flash", "gemini-1.5-flash"];
+    for (const modelName of candidateModels) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: userContent,
+          config: {
+            systemInstruction,
+            temperature: 0.1,
+          },
+        });
+        if (typeof response?.text === "string" && response.text.trim().length > 0) {
+          answerText = response.text.trim();
+          break;
+        }
+      } catch (modelErr: any) {
+        console.warn(`Server Gemini model '${modelName}' fallback:`, modelErr?.message || modelErr);
+      }
+    }
 
-    let answerText = (response.text || "").trim();
     if (!answerText) {
-      answerText = deterministicResponse;
+      answerText = String(deterministicResponse || "No verified data found in SERA database.");
     } else if (!answerText.includes(SERA_MANDATORY_DISCLAIMER)) {
       answerText = `${answerText}\n\n${SERA_MANDATORY_DISCLAIMER}`;
     }
 
     return {
-      answer: answerText,
-      retrievedMedicines: retrieved.map((r) => ({
+      answer: String(answerText),
+      retrievedMedicines: (retrieved || []).map((r) => ({
         name: r.record.name,
         matchType: r.matchType,
         score: Math.round(r.score * 100) / 100,
@@ -281,8 +292,8 @@ User Query: "${userPrompt}"`;
     console.warn("Using grounded deterministic SERA response (Gemini API fallback):", err?.message || err);
 
     return {
-      answer: deterministicResponse,
-      retrievedMedicines: retrieved.map((r) => ({
+      answer: String(deterministicResponse || "No verified data found in SERA database."),
+      retrievedMedicines: (retrieved || []).map((r) => ({
         name: r.record.name,
         matchType: r.matchType,
         score: Math.round(r.score * 100) / 100,
@@ -314,14 +325,18 @@ export function formatSingleDrugSeraResponse(
     "overdose",
   ].some((s) => lowerQuery.includes(s));
 
-  const usesText = rec?.uses?.length ? rec.uses.join(", ") : "Standard relief for target symptoms as indicated on packaging";
-  const sideEffectsText = rec?.sideEffects?.length ? rec.sideEffects.join(", ") : "Mild nausea, stomach upset, or drowsiness in sensitive individuals";
-  const classText = [rec?.therapeuticClass, rec?.chemicalClass, rec?.actionClass].filter(Boolean).join(" • ") || mapped.category || "Pharmaceutical Agent";
+  const usesText = Array.isArray(rec?.uses) && rec.uses.length ? (rec.uses || []).join(", ") : "Standard relief for target symptoms as indicated on packaging";
+  const sideEffectsText = Array.isArray(rec?.sideEffects) && rec.sideEffects.length ? (rec.sideEffects || []).join(", ") : "Mild nausea, stomach upset, or drowsiness in sensitive individuals";
+  const classText = [rec?.therapeuticClass, rec?.chemicalClass, rec?.actionClass].filter(Boolean).join(" • ") || mapped?.category || "Pharmaceutical Agent";
+  const safeGenerics = Array.isArray(mapped?.genericIngredients) ? mapped.genericIngredients : [];
+  const genericsPlus = (safeGenerics || []).join(" + ") || "None listed";
+  const genericsOr = (safeGenerics || []).join(" or ") || "None listed";
+  const genericsComma = (safeGenerics || []).join(", ") || "None listed";
 
   const sections = [
-    `🔍 Mapped Ingredients:\n• ${mapped.displayMapping}\n• Pharmacological Class: ${classText}`,
-    `⚠️ Interaction Status:\n• Single medicine lookup (${mapped.genericIngredients.join(" + ")}). To check drug-drug interactions in db_drug_interactions.csv, enter a second medicine (e.g., "${mapped.inputName} + Disprin" or "${mapped.inputName} + Cetirizine").\n• Warning: Avoid combining with other medicines that also contain ${mapped.genericIngredients.join(" or ")} to prevent accidental double-dosing.`,
-    `📖 Plain English Explanation:\n• Primary Uses: ${usesText}.\n• How It Works & Risks: ${mapped.inputName} works via its active compound(s) (${mapped.genericIngredients.join(", ")}). Common side effects can include ${sideEffectsText}.`,
+    `🔍 Mapped Ingredients:\n• ${mapped?.displayMapping || "None listed"}\n• Pharmacological Class: ${classText}`,
+    `⚠️ Interaction Status:\n• Single medicine lookup (${genericsPlus}). To check drug-drug interactions in db_drug_interactions.csv, enter a second medicine (e.g., "${mapped?.inputName || "Medicine"} + Disprin" or "${mapped?.inputName || "Medicine"} + Cetirizine").\n• Warning: Avoid combining with other medicines that also contain ${genericsOr} to prevent accidental double-dosing.`,
+    `📖 Plain English Explanation:\n• Primary Uses: ${usesText}.\n• How It Works & Risks: ${mapped?.inputName || "This medicine"} works via its active compound(s) (${genericsComma}). Common side effects can include ${sideEffectsText}.`,
     `✅ Safety Guidance:\n• Take with a full glass of water. If this medicine contains an NSAID (like Ibuprofen, Diclofenac, Mefenamic Acid, Naproxen, or Aspirin), always take it after food or milk to protect your stomach lining.\n• Check all other cold, flu, or pain tablets you are taking so you never duplicate active ingredients.`,
   ];
 

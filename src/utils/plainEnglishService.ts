@@ -5,30 +5,42 @@ import { GoogleGenAI } from "@google/genai";
  * using Google Gemini when an API key is available.
  */
 export async function translateToPlainEnglish(clinicalText: string): Promise<string> {
+  const safeClinicalText = typeof clinicalText === "string" ? clinicalText : String(clinicalText || "");
   const apiKey =
     import.meta.env.VITE_GEMINI_API_KEY ||
     process.env.GEMINI_API_KEY ||
     process.env.VITE_GEMINI_API_KEY;
-  if (!apiKey || !clinicalText.trim()) {
-    return clinicalText;
+  if (!apiKey || !safeClinicalText.trim()) {
+    return safeClinicalText;
   }
 
   try {
     const ai = new GoogleGenAI({ apiKey });
+    const models = ["gemini-2.5-flash", "gemini-1.5-flash"];
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: `Translate the following clinical medication guidance into simple, conversational plain English for everyday patients. Keep the safety warnings intact:
+    for (const model of models) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: `Translate the following clinical medication guidance into simple, conversational plain English for everyday patients. Keep the safety warnings intact:
 
-"${clinicalText}"`,
-      config: {
-        temperature: 0.1,
-      },
-    });
+"${safeClinicalText}"`,
+          config: {
+            temperature: 0.1,
+          },
+        });
 
-    return response.text || clinicalText;
+        if (typeof response?.text === "string" && response.text.trim().length > 0) {
+          return response.text.trim();
+        }
+      } catch (modelErr) {
+        console.warn(`Plain English translation model '${model}' fallback:`, modelErr);
+      }
+    }
+
+    return safeClinicalText;
   } catch (err) {
     console.warn("Plain English translation fallback:", err);
-    return clinicalText;
+    return safeClinicalText;
   }
 }

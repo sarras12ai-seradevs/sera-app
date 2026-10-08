@@ -201,18 +201,29 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
 
       const data = await response.json();
       const localData = await retrieveLocalDatabaseData(query);
-      const reply =
-        data.answer ||
-        data.text ||
-        localData.formattedText;
+      const rawReply =
+        typeof data?.answer === "string" && data.answer.trim().length > 0
+          ? data.answer
+          : typeof data?.text === "string" && data.text.trim().length > 0
+          ? data.text
+          : localData.formattedText;
+
+      const guaranteedReply: string =
+        typeof rawReply === "string" && rawReply.trim().length > 0
+          ? rawReply
+          : [
+              `Mapped Ingredients (from local DB):\n• ${(localData?.ingredients || []).join(", ") || "None listed"}`,
+              `Interaction / Duplicate Hazard Status (from local DB):\n• ${(localData?.hazards || []).join("\n") || "No duplicate hazards detected"}`,
+              `Precaution / Action (from local DB):\n• ${(localData?.precautions || []).join("\n") || "No verified data found in SERA database."}`,
+            ].join("\n\n");
 
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content: reply,
-          retrievedMedicines: data.retrievedMedicines || [],
-          isAvailableInDataset: data.isAvailableInDataset ?? localData.hasVerifiedData,
+          content: String(guaranteedReply),
+          retrievedMedicines: Array.isArray(data?.retrievedMedicines) ? data.retrievedMedicines : [],
+          isAvailableInDataset: data?.isAvailableInDataset ?? localData.hasVerifiedData,
           localFallbackData: localData,
           usedDeterministicFallback: false,
         },
@@ -221,25 +232,47 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
       // Client-side RAG with Gemini (if apiKey exists) and automatic deterministic local database fallback
       try {
         const ragResult = await queryGeminiWithLocalRag(query);
+        const safeAnswer: string =
+          typeof ragResult?.answer === "string" && ragResult.answer.trim().length > 0
+            ? ragResult.answer
+            : typeof ragResult?.localData?.formattedText === "string" &&
+              ragResult.localData.formattedText.trim().length > 0
+            ? ragResult.localData.formattedText
+            : [
+                `Mapped Ingredients (from local DB):\n• ${(ragResult?.localData?.ingredients || []).join(", ") || "None listed"}`,
+                `Interaction / Duplicate Hazard Status (from local DB):\n• ${(ragResult?.localData?.hazards || []).join("\n") || "No duplicate hazards detected"}`,
+                `Precaution / Action (from local DB):\n• ${(ragResult?.localData?.precautions || []).join("\n") || "No verified data found in SERA database."}`,
+              ].join("\n\n");
+
         setMessages((prev) => [
           ...prev,
           {
             role: "assistant",
-            content: ragResult.answer,
-            isAvailableInDataset: ragResult.localData.hasVerifiedData,
-            localFallbackData: ragResult.localData,
-            usedDeterministicFallback: ragResult.usedDeterministicFallback,
+            content: String(safeAnswer),
+            isAvailableInDataset: Boolean(ragResult?.localData?.hasVerifiedData),
+            localFallbackData: ragResult?.localData,
+            usedDeterministicFallback: Boolean(ragResult?.usedDeterministicFallback),
           },
         ]);
       } catch (fallbackErr) {
         console.error("Local database fallback error:", fallbackErr);
         const emergencyLocal = await retrieveLocalDatabaseData(query);
+        const safeEmergencyText: string =
+          typeof emergencyLocal?.formattedText === "string" &&
+          emergencyLocal.formattedText.trim().length > 0
+            ? emergencyLocal.formattedText
+            : [
+                `Mapped Ingredients (from local DB):\n• ${(emergencyLocal?.ingredients || []).join(", ") || "None listed"}`,
+                `Interaction / Duplicate Hazard Status (from local DB):\n• ${(emergencyLocal?.hazards || []).join("\n") || "No duplicate hazards detected"}`,
+                `Precaution / Action (from local DB):\n• ${(emergencyLocal?.precautions || []).join("\n") || "No verified data found in SERA database."}`,
+              ].join("\n\n");
+
         setMessages((prev) => [
           ...prev,
           {
             role: "assistant",
-            content: emergencyLocal.formattedText,
-            isAvailableInDataset: emergencyLocal.hasVerifiedData,
+            content: String(safeEmergencyText),
+            isAvailableInDataset: Boolean(emergencyLocal?.hasVerifiedData),
             localFallbackData: emergencyLocal,
             usedDeterministicFallback: true,
           },
@@ -406,8 +439,8 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
                         Mapped Ingredients (from local DB)
                       </div>
                       <ul className="text-xs text-slate-700 dark:text-slate-300 space-y-1 list-disc pl-4">
-                        {msg.localFallbackData.mappedIngredients.map((item, i) => (
-                          <li key={i}>{item}</li>
+                        {(msg.localFallbackData.mappedIngredients || msg.localFallbackData.ingredients || ["None listed"]).map((item, i) => (
+                          <li key={i}>{String(item)}</li>
                         ))}
                       </ul>
                     </div>
@@ -417,8 +450,8 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
                         Interaction / Duplicate Hazard Status (from local DB)
                       </div>
                       <ul className="text-xs text-slate-800 dark:text-slate-300 space-y-1 list-disc pl-4">
-                        {msg.localFallbackData.interactionHazardStatus.map((item, i) => (
-                          <li key={i}>{item}</li>
+                        {(msg.localFallbackData.interactionHazardStatus || msg.localFallbackData.hazards || ["No duplicate hazards detected"]).map((item, i) => (
+                          <li key={i}>{String(item)}</li>
                         ))}
                       </ul>
                     </div>
@@ -428,8 +461,8 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
                         Precaution / Action (from local DB)
                       </div>
                       <ul className="text-xs text-slate-800 dark:text-slate-300 space-y-1 list-disc pl-4">
-                        {msg.localFallbackData.precautionAction.map((item, i) => (
-                          <li key={i}>{item}</li>
+                        {(msg.localFallbackData.precautionAction || msg.localFallbackData.precautions || ["No verified data found in SERA database."]).map((item, i) => (
+                          <li key={i}>{String(item)}</li>
                         ))}
                       </ul>
                     </div>
@@ -440,7 +473,9 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
                       msg.role === "user" ? "text-white dark:text-slate-100" : "text-slate-800 dark:text-slate-300"
                     }`}
                   >
-                    {msg.content}
+                    {typeof msg.content === "string"
+                      ? msg.content
+                      : String(msg.content ?? "No verified data found in SERA database.")}
                   </div>
                 )}
 
