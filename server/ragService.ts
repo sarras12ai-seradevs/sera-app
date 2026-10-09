@@ -278,7 +278,7 @@ export async function executeRagQuery(
         throw new Error("Gemini API key is missing on server; using Symptom Overview & Precaution fallback.");
       }
 
-      const symptomModels = ["gemini-3.8-flash", "gemini-3.8-pro"];
+      const symptomModels = ["gemini-2.5-flash", "gemini-3.8-flash", "gemini-flash-latest"];
       let answerText = "";
       for (const modelName of symptomModels) {
         try {
@@ -437,7 +437,7 @@ User Query: "${userPrompt}"`;
     }
 
     let answerText = "";
-    const candidateModels = ["gemini-3.8-flash", "gemini-3.8-pro"];
+    const candidateModels = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.5-flash"];
     for (const modelName of candidateModels) {
       try {
         const response = await ai.models.generateContent({

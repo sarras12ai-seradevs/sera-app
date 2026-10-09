@@ -16,7 +16,7 @@ export async function translateToPlainEnglish(clinicalText: string): Promise<str
 
   try {
     const ai = new GoogleGenAI({ apiKey });
-    const models = ["gemini-3.8-flash", "gemini-3.8-pro"];
+    const models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.5-flash"];
 
     for (const model of models) {
       try {

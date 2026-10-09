@@ -12,9 +12,9 @@ import type { ParsedClientMedicineRecord } from "../context/DatasetContext";
 
 export { cleanDrugInput, extractCleanDrugEntities };
 
-export const GEMINI_PRIMARY_MODEL = "gemini-3.8-flash";
-export const GEMINI_FALLBACK_MODEL = "gemini-3.8-pro";
-export const GEMINI_SYMPTOM_MODEL = "gemini-3.8-flash";
+export const GEMINI_PRIMARY_MODEL = "gemini-1.5-flash";
+export const GEMINI_FALLBACK_MODEL = "gemini-1.5-pro";
+export const GEMINI_SYMPTOM_MODEL = "gemini-2.5-flash";
 export const GEMINI_CLIENT_MODEL = GEMINI_PRIMARY_MODEL;
 
 export const SERA_STRICT_SYSTEM_PROMPT =
@@ -670,7 +670,7 @@ export async function queryGeminiWithLocalRag(
       }
 
       const ai = new GoogleGenAI({ apiKey });
-      const symptomModels = [GEMINI_PRIMARY_MODEL, GEMINI_FALLBACK_MODEL];
+      const symptomModels = ["gemini-2.5-flash", "gemini-3.8-flash", "gemini-flash-latest"];
 
       for (const modelName of symptomModels) {
         try {
@@ -741,10 +741,10 @@ export async function queryGeminiWithLocalRag(
 
     const ai = new GoogleGenAI({ apiKey });
 
-    // Primary model call: 'gemini-3.8-flash'
+    // Primary model call: 'gemini-1.5-flash'
     try {
       const primaryResponse = await ai.models.generateContent({
-        model: GEMINI_PRIMARY_MODEL, // 'gemini-3.8-flash'
+        model: GEMINI_PRIMARY_MODEL, // 'gemini-1.5-flash'
         contents: groundedUserMessage,
         config: {
           systemInstruction: systemInstructionWithContext,
@@ -761,33 +761,60 @@ export async function queryGeminiWithLocalRag(
           usedDeterministicFallback: false,
         };
       }
-      throw new Error("Empty response from primary model gemini-3.8-flash");
+      throw new Error("Empty response from primary model gemini-1.5-flash");
     } catch (primaryErr: any) {
       console.warn(
         `Primary Gemini model '${GEMINI_PRIMARY_MODEL}' failed (retrying with fallback '${GEMINI_FALLBACK_MODEL}'):`,
         primaryErr?.status || primaryErr?.message || primaryErr
       );
 
-      // Automatic retry fallback to 'gemini-3.8-pro' on 503, 404, or primary error
-      const fallbackResponse = await ai.models.generateContent({
-        model: GEMINI_FALLBACK_MODEL, // 'gemini-3.8-pro'
-        contents: groundedUserMessage,
-        config: {
-          systemInstruction: systemInstructionWithContext,
-          temperature: 0.1,
-        },
-      });
+      // Automatic retry fallback to 'gemini-1.5-pro' on 503, 404, or primary error
+      try {
+        const fallbackResponse = await ai.models.generateContent({
+          model: GEMINI_FALLBACK_MODEL, // 'gemini-1.5-pro'
+          contents: groundedUserMessage,
+          config: {
+            systemInstruction: systemInstructionWithContext,
+            temperature: 0.1,
+          },
+        });
 
-      const fallbackText =
-        typeof fallbackResponse?.text === "string" ? fallbackResponse.text.trim() : "";
-      if (fallbackText.length > 0) {
-        return {
-          answer: fallbackText,
-          localData,
-          usedDeterministicFallback: false,
-        };
+        const fallbackText =
+          typeof fallbackResponse?.text === "string" ? fallbackResponse.text.trim() : "";
+        if (fallbackText.length > 0) {
+          return {
+            answer: fallbackText,
+            localData,
+            usedDeterministicFallback: false,
+          };
+        }
+        throw new Error("Empty response from fallback model gemini-1.5-pro");
+      } catch (secondaryErr: any) {
+        console.warn(
+          `Fallback Gemini model '${GEMINI_FALLBACK_MODEL}' failed (trying 'gemini-2.5-flash'):`,
+          secondaryErr?.status || secondaryErr?.message || secondaryErr
+        );
+
+        const tertiaryResponse = await ai.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: groundedUserMessage,
+          config: {
+            systemInstruction: systemInstructionWithContext,
+            temperature: 0.1,
+          },
+        });
+
+        const tertiaryText =
+          typeof tertiaryResponse?.text === "string" ? tertiaryResponse.text.trim() : "";
+        if (tertiaryText.length > 0) {
+          return {
+            answer: tertiaryText,
+            localData,
+            usedDeterministicFallback: false,
+          };
+        }
+        throw secondaryErr;
       }
-      throw new Error("Empty response from fallback model gemini-3.8-pro");
     }
   } catch (err) {
     // PRESERVE WORKING LOCAL FALLBACK:
