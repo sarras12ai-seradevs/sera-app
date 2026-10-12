@@ -17,6 +17,13 @@ export const GEMINI_FALLBACK_MODEL = "gemini-3.8-pro";
 export const GEMINI_SYMPTOM_MODEL = "gemini-3.8-flash";
 export const GEMINI_CLIENT_MODEL = GEMINI_PRIMARY_MODEL;
 
+// Ensure it checks the VITE prefix properly:
+export const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+
+if (!API_KEY) {
+  console.warn("Gemini API key missing in environment! Falling back to local database mode.");
+}
+
 export const SERA_STRICT_SYSTEM_PROMPT =
   "You are SERA Clinical Guide. You MUST ONLY use the provided Local Database Results below to answer. If an ingredient or interaction is not listed in the provided data, state 'No verified data found in SERA database'. Do NOT use outside medical knowledge or make assumptions.";
 

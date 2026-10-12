@@ -317,12 +317,19 @@ export function buildServerSymptomFallbackText(prompt: string): string {
   return getOfflineSymptomResponse(prompt);
 }
 
+// Ensure it checks the VITE prefix properly:
+export const API_KEY = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+
+if (!API_KEY) {
+  console.warn("Gemini API key missing in environment! Falling back to local database mode.");
+}
+
 /**
  * Lazy initializer for Gemini client.
  * Checks all possible environment variable names; returns null if undefined or initialization fails.
  */
 export function getGeminiClient(): GoogleGenAI | null {
-  const apiKey = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+  const apiKey = API_KEY || process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return null;
   }
