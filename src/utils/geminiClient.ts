@@ -12,9 +12,9 @@ import type { ParsedClientMedicineRecord } from "../context/DatasetContext";
 
 export { cleanDrugInput, extractCleanDrugEntities };
 
-export const GEMINI_PRIMARY_MODEL = "gemini-1.5-flash";
-export const GEMINI_FALLBACK_MODEL = "gemini-1.5-pro";
-export const GEMINI_SYMPTOM_MODEL = "gemini-2.5-flash";
+export const GEMINI_PRIMARY_MODEL = "gemini-3.8-flash";
+export const GEMINI_FALLBACK_MODEL = "gemini-3.8-pro";
+export const GEMINI_SYMPTOM_MODEL = "gemini-3.8-flash";
 export const GEMINI_CLIENT_MODEL = GEMINI_PRIMARY_MODEL;
 
 export const SERA_STRICT_SYSTEM_PROMPT =
@@ -126,23 +126,53 @@ export function isSymptomQuery(prompt: string, selectedDrugs?: string[]): boolea
     "fever & chills",
     "fever",
     "chills",
+    "headache & migraine",
     "headache",
     "migraine",
+    "cough & chest congestion",
     "cough",
+    "cold",
+    "a cold",
+    "common cold",
+    "flu",
+    "sore throat & pain",
     "sore throat",
+    "runny nose & sneezing",
     "runny nose",
     "sneezing",
+    "blocked nose & sinus",
     "blocked nose",
+    "congestion",
     "sinus",
+    "acidity & heartburn",
     "acidity",
     "heartburn",
+    "acid reflux",
+    "gastritis",
+    "gas",
+    "indigestion",
+    "nausea",
+    "vomiting",
+    "loose stools & diarrhea",
     "diarrhea",
     "loose stools",
+    "constipation & hard stools",
     "constipation",
+    "muscle strain & back ache",
     "muscle strain",
+    "muscle ache",
     "back ache",
+    "back pain",
     "stomach pain",
+    "stomach ache",
+    "cramps",
     "body ache",
+    "body pain",
+    "joint pain",
+    "fatigue",
+    "tiredness",
+    "insomnia",
+    "dizziness",
   ];
 
   return symptomKeywords.some((kw) => new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(lower));
@@ -200,9 +230,9 @@ export function buildSymptomFallbackData(prompt: string): LocalRagFallbackData {
   const formattedText = [
     `I'm sorry to hear you're dealing with **${matchedSymptom.name}**. Here is some educational guidance to help you feel better safely:`,
     `### Likely Causes\n${matchedSymptom.description} It is most commonly triggered by:\n${(matchedSymptom.commonCauses || []).map((c) => `- ${c}`).join("\n")}`,
-    `### Standard Over-the-Counter (OTC) Active Ingredients\n${(otcOptions || []).map((o) => `- ${o}`).join("\n")}\n- *Precaution:* Always check package labels for adult dosing intervals, take NSAIDs (like Ibuprofen or Aspirin) with food, and avoid combining multiple products containing Paracetamol.`,
-    `### Clear Home Care Steps\n${(homeCarePrecautions || []).map((h) => `- ${h}`).join("\n")}`,
-    `### Crucial 'Red-Flag' Warning Signs\nPlease seek immediate medical evaluation if you notice any of the following:\n${(redFlagWarnings || []).map((r) => `- ${r}`).join("\n")}`,
+    `### Standard OTC Options & Precautions\n${(otcOptions || []).map((o) => `- ${o}`).join("\n")}\n- *Precaution:* Always check package labels for adult dosing intervals, take NSAIDs (like Ibuprofen or Aspirin) with food, and avoid combining multiple products containing Paracetamol.`,
+    `### Home Care Steps\n${(homeCarePrecautions || []).map((h) => `- ${h}`).join("\n")}`,
+    `### Red-Flag Warning Signs\nPlease seek immediate medical evaluation if you notice any of the following:\n${(redFlagWarnings || []).map((r) => `- ${r}`).join("\n")}`,
   ].join("\n\n");
 
   return {
@@ -670,7 +700,7 @@ export async function queryGeminiWithLocalRag(
       }
 
       const ai = new GoogleGenAI({ apiKey });
-      const symptomModels = ["gemini-2.5-flash", "gemini-3.8-flash", "gemini-flash-latest"];
+      const symptomModels = ["gemini-3.8-flash", "gemini-3.8-pro", "gemini-3.1-pro-preview", "gemini-2.5-flash"];
 
       for (const modelName of symptomModels) {
         try {
@@ -700,11 +730,11 @@ export async function queryGeminiWithLocalRag(
       throw new Error("All client Gemini models failed for symptom query");
     } catch (err) {
       console.warn("Client symptom generation fallback:", err);
-      symptomFallback.isFallback = false;
+      symptomFallback.isFallback = true;
       return {
         answer: symptomFallback.formattedText,
         localData: symptomFallback,
-        usedDeterministicFallback: false,
+        usedDeterministicFallback: true,
       };
     }
   }
@@ -741,10 +771,10 @@ export async function queryGeminiWithLocalRag(
 
     const ai = new GoogleGenAI({ apiKey });
 
-    // Primary model call: 'gemini-1.5-flash'
+    // Primary model call: 'gemini-3.8-flash'
     try {
       const primaryResponse = await ai.models.generateContent({
-        model: GEMINI_PRIMARY_MODEL, // 'gemini-1.5-flash'
+        model: GEMINI_PRIMARY_MODEL, // 'gemini-3.8-flash'
         contents: groundedUserMessage,
         config: {
           systemInstruction: systemInstructionWithContext,
@@ -761,17 +791,17 @@ export async function queryGeminiWithLocalRag(
           usedDeterministicFallback: false,
         };
       }
-      throw new Error("Empty response from primary model gemini-1.5-flash");
+      throw new Error("Empty response from primary model gemini-3.8-flash");
     } catch (primaryErr: any) {
       console.warn(
         `Primary Gemini model '${GEMINI_PRIMARY_MODEL}' failed (retrying with fallback '${GEMINI_FALLBACK_MODEL}'):`,
         primaryErr?.status || primaryErr?.message || primaryErr
       );
 
-      // Automatic retry fallback to 'gemini-1.5-pro' on 503, 404, or primary error
+      // Automatic retry fallback to 'gemini-3.8-pro' on 503, 404, or primary error
       try {
         const fallbackResponse = await ai.models.generateContent({
-          model: GEMINI_FALLBACK_MODEL, // 'gemini-1.5-pro'
+          model: GEMINI_FALLBACK_MODEL, // 'gemini-3.8-pro'
           contents: groundedUserMessage,
           config: {
             systemInstruction: systemInstructionWithContext,
@@ -788,7 +818,7 @@ export async function queryGeminiWithLocalRag(
             usedDeterministicFallback: false,
           };
         }
-        throw new Error("Empty response from fallback model gemini-1.5-pro");
+        throw new Error("Empty response from fallback model gemini-3.8-pro");
       } catch (secondaryErr: any) {
         console.warn(
           `Fallback Gemini model '${GEMINI_FALLBACK_MODEL}' failed (trying 'gemini-2.5-flash'):`,

@@ -265,16 +265,18 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
     setActiveSelectedDrugs([]);
     setLoading(true);
 
-    // 1. INTENT ROUTING: If Symptom Query, bypass local DDI lookup and route directly through Gemini ('gemini-2.5-flash')
+    // 1. INTENT ROUTING: If Symptom Query, bypass local DDI lookup and route directly through Gemini ('gemini-3.8-flash')
     if (isSymptomQuery(query, drugsForQuery)) {
       try {
         let symptomAnswer = "";
+        let isFallback = false;
 
-        // If client apiKey is configured, route directly through client Gemini ('gemini-2.5-flash')
+        // If client apiKey is configured, route directly through client Gemini ('gemini-3.8-flash')
         if (apiKey) {
           const ragResult = await queryGeminiWithLocalRag(query, undefined, undefined);
           if (typeof ragResult?.answer === "string" && ragResult.answer.trim().length > 0) {
             symptomAnswer = ragResult.answer.trim();
+            isFallback = Boolean(ragResult.usedDeterministicFallback);
           }
         }
 
@@ -291,6 +293,7 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
               const data = await response.json();
               if (typeof data?.answer === "string" && data.answer.trim().length > 0) {
                 symptomAnswer = data.answer.trim();
+                isFallback = Boolean(data.usedDeterministicFallback);
               }
             }
           } catch {
@@ -298,8 +301,11 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
           }
         }
 
-        const finalSymptomReply =
-          symptomAnswer || buildSymptomFallbackData(query).formattedText;
+        const fallbackData = buildSymptomFallbackData(query);
+        const finalSymptomReply = symptomAnswer || fallbackData.formattedText;
+        if (!symptomAnswer) {
+          isFallback = true;
+        }
 
         setMessages((prev) => [
           ...prev,
@@ -309,7 +315,8 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
             retrievedMedicines: [],
             isAvailableInDataset: true,
             isSymptomQuery: true,
-            usedDeterministicFallback: false,
+            localFallbackData: fallbackData,
+            usedDeterministicFallback: isFallback,
           },
         ]);
       } catch (symptomErr) {
@@ -322,7 +329,8 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
             retrievedMedicines: [],
             isAvailableInDataset: true,
             isSymptomQuery: true,
-            usedDeterministicFallback: false,
+            localFallbackData: symptomFallback,
+            usedDeterministicFallback: true,
           },
         ]);
       } finally {
@@ -597,52 +605,84 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
                     : "bg-white dark:bg-[#1E293B] text-slate-800 dark:text-slate-300 rounded-bl-xs border border-slate-100 dark:border-slate-700/50 shadow-xs"
                 }`}
               >
-                {msg.usedDeterministicFallback &&
-                msg.localFallbackData &&
-                !msg.isSymptomQuery &&
-                !msg.localFallbackData.isSymptomQuery &&
-                !isSymptomQuery(msg.localFallbackData.query || "") ? (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-100 dark:border-slate-700/50">
-                      <span className="text-xs font-semibold text-emerald-800 dark:text-[#6EE7B7] flex items-center gap-1.5">
-                        <ShieldCheck className="w-4 h-4 shrink-0" />
-                        <span>Verified Local Database Analysis (248k Medicine &amp; DDI Index)</span>
-                      </span>
-                    </div>
-
-                    <div className="bg-slate-50 dark:bg-[#0F172A] p-3 rounded-xl border border-slate-100 dark:border-slate-700/50 space-y-1.5">
-                      <div className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                        Mapped Ingredients (from local DB)
+                {msg.usedDeterministicFallback ? (
+                  // If it's a symptom query, render the SERA Health Guidance card with clean Markdown sections
+                  msg.isSymptomQuery ||
+                  msg.localFallbackData?.isSymptomQuery ||
+                  (msg.localFallbackData?.query && isSymptomQuery(msg.localFallbackData.query)) ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-100 dark:border-slate-700/50">
+                        <span className="text-xs font-semibold text-emerald-800 dark:text-[#6EE7B7] flex items-center gap-1.5">
+                          <ShieldCheck className="w-4 h-4 shrink-0" />
+                          <span>SERA Health Guidance</span>
+                        </span>
                       </div>
-                      <ul className="text-xs text-slate-700 dark:text-slate-300 space-y-1 list-disc pl-4">
-                        {(msg.localFallbackData.mappedIngredients || msg.localFallbackData.ingredients || ["None listed"]).map((item, i) => (
-                          <li key={i}>{String(item)}</li>
-                        ))}
-                      </ul>
-                    </div>
-
-                    <div className="bg-amber-50/60 dark:bg-amber-950/20 p-3 rounded-xl border border-amber-200/60 dark:border-amber-500/30 space-y-1.5">
-                      <div className="text-xs font-bold text-slate-900 dark:text-amber-200">
-                        Interaction / Duplicate Hazard Status (from local DB)
+                      <div className="font-sans leading-relaxed break-words text-slate-800 dark:text-slate-300">
+                        {renderFormattedMarkdown(
+                          typeof msg.content === "string"
+                            ? msg.content
+                            : String(msg.content ?? "No verified data found in SERA database."),
+                          false
+                        )}
                       </div>
-                      <ul className="text-xs text-slate-800 dark:text-slate-300 space-y-1 list-disc pl-4">
-                        {(msg.localFallbackData.interactionHazardStatus || msg.localFallbackData.hazards || ["No duplicate hazards detected"]).map((item, i) => (
-                          <li key={i}>{String(item)}</li>
-                        ))}
-                      </ul>
                     </div>
-
-                    <div className="bg-emerald-50/50 dark:bg-emerald-950/20 p-3 rounded-xl border border-emerald-200/60 dark:border-emerald-500/30 space-y-1.5">
-                      <div className="text-xs font-bold text-slate-900 dark:text-[#6EE7B7]">
-                        Precaution / Action (from local DB)
+                  ) : msg.localFallbackData ? (
+                    // Medicine DDI Query Fallback: Verified Local Database Analysis card
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-100 dark:border-slate-700/50">
+                        <span className="text-xs font-semibold text-emerald-800 dark:text-[#6EE7B7] flex items-center gap-1.5">
+                          <ShieldCheck className="w-4 h-4 shrink-0" />
+                          <span>Verified Local Database Analysis (248k Medicine &amp; DDI Index)</span>
+                        </span>
                       </div>
-                      <ul className="text-xs text-slate-800 dark:text-slate-300 space-y-1 list-disc pl-4">
-                        {(msg.localFallbackData.precautionAction || msg.localFallbackData.precautions || ["No verified data found in SERA database."]).map((item, i) => (
-                          <li key={i}>{String(item)}</li>
-                        ))}
-                      </ul>
+
+                      <div className="bg-slate-50 dark:bg-[#0F172A] p-3 rounded-xl border border-slate-100 dark:border-slate-700/50 space-y-1.5">
+                        <div className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                          Mapped Ingredients (from local DB)
+                        </div>
+                        <ul className="text-xs text-slate-700 dark:text-slate-300 space-y-1 list-disc pl-4">
+                          {(msg.localFallbackData.mappedIngredients || msg.localFallbackData.ingredients || ["None listed"]).map((item, i) => (
+                            <li key={i}>{String(item)}</li>
+                          ))}
+                        </ul>
+                      </div>
+
+                      <div className="bg-amber-50/60 dark:bg-amber-950/20 p-3 rounded-xl border border-amber-200/60 dark:border-amber-500/30 space-y-1.5">
+                        <div className="text-xs font-bold text-slate-900 dark:text-amber-200">
+                          Interaction / Duplicate Hazard Status (from local DB)
+                        </div>
+                        <ul className="text-xs text-slate-800 dark:text-slate-300 space-y-1 list-disc pl-4">
+                          {(msg.localFallbackData.interactionHazardStatus || msg.localFallbackData.hazards || ["No duplicate hazards detected"]).map((item, i) => (
+                            <li key={i}>{String(item)}</li>
+                          ))}
+                        </ul>
+                      </div>
+
+                      <div className="bg-emerald-50/50 dark:bg-emerald-950/20 p-3 rounded-xl border border-emerald-200/60 dark:border-emerald-500/30 space-y-1.5">
+                        <div className="text-xs font-bold text-slate-900 dark:text-[#6EE7B7]">
+                          Precaution / Action (from local DB)
+                        </div>
+                        <ul className="text-xs text-slate-800 dark:text-slate-300 space-y-1 list-disc pl-4">
+                          {(msg.localFallbackData.precautionAction || msg.localFallbackData.precautions || ["No verified data found in SERA database."]).map((item, i) => (
+                            <li key={i}>{String(item)}</li>
+                          ))}
+                        </ul>
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div
+                      className={`font-sans leading-relaxed break-words ${
+                        msg.role === "user" ? "text-white dark:text-slate-100" : "text-slate-800 dark:text-slate-300"
+                      }`}
+                    >
+                      {renderFormattedMarkdown(
+                        typeof msg.content === "string"
+                          ? msg.content
+                          : String(msg.content ?? "No verified data found in SERA database."),
+                        msg.role === "user"
+                      )}
+                    </div>
+                  )
                 ) : (
                   <div
                     className={`font-sans leading-relaxed break-words ${

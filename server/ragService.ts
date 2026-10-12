@@ -76,78 +76,247 @@ export function isServerSymptomQuery(prompt: string, selectedDrugs?: string[]): 
     "fever & chills",
     "fever",
     "chills",
+    "headache & migraine",
     "headache",
     "migraine",
+    "cough & chest congestion",
     "cough",
+    "cold",
+    "a cold",
+    "common cold",
+    "flu",
+    "sore throat & pain",
     "sore throat",
+    "runny nose & sneezing",
     "runny nose",
     "sneezing",
+    "blocked nose & sinus",
     "blocked nose",
+    "congestion",
     "sinus",
+    "acidity & heartburn",
     "acidity",
     "heartburn",
+    "acid reflux",
+    "gastritis",
+    "gas",
+    "indigestion",
+    "nausea",
+    "vomiting",
+    "loose stools & diarrhea",
     "diarrhea",
     "loose stools",
+    "constipation & hard stools",
     "constipation",
+    "muscle strain & back ache",
     "muscle strain",
+    "muscle ache",
     "back ache",
+    "back pain",
     "stomach pain",
+    "stomach ache",
+    "cramps",
     "body ache",
+    "body pain",
+    "joint pain",
+    "fatigue",
+    "tiredness",
+    "insomnia",
+    "dizziness",
   ];
 
   return symptomKeywords.some((kw) => new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(lower));
 }
 
-function buildServerSymptomFallbackText(prompt: string): string {
-  const lower = (prompt || "").toLowerCase();
-  if (lower.includes("fever") || lower.includes("chill")) {
-    return [
-      "I'm sorry to hear you're experiencing **Fever & Chills**. Here is warm, practical guidance to help you manage your symptoms safely:",
-      "### Likely Causes\n- **Viral Flu or Common Cold:** An elevated temperature is your immune system's natural response to fighting off respiratory viruses.\n- **Seasonal Infections or Immune Response:** Can also follow vaccinations, heat exhaustion, or acute bacterial/viral infections.",
-      "### Standard Over-the-Counter (OTC) Active Ingredients\n- **Paracetamol (500mg – 650mg):** First-line option to gently lower fever and ease shivering body aches (take every 4–6 hours as needed; do not exceed 4,000mg in 24 hours).\n- **Ibuprofen (200mg – 400mg):** Helps with fever and muscle inflammation; always take with food or milk to protect your stomach.\n- *Precaution:* Check labels on cold/flu combination tablets so you never accidentally double-dose Paracetamol.",
-      "### Clear Home Care Steps\n- **Stay Hydrated:** Sip water, oral rehydration salts (ORS), coconut water, or clear warm broths frequently to replace fluids lost through sweating.\n- **Rest & Comfort:** Dress in a single layer of light, breathable cotton clothing and rest in a well-ventilated room.\n- **Lukewarm Compress:** Place a cool or lukewarm damp washcloth across your forehead once shivering subsides.",
-      "### Crucial 'Red-Flag' Warning Signs\nSeek immediate emergency medical care if you notice:\n- Fever rising above **103°F (39.4°C)** that does not come down after taking medication.\n- Severe headache with a **stiff neck**, confusion, extreme drowsiness, or sensitivity to bright light.\n- Shortness of breath, persistent vomiting, chest pain, or a fever lasting **more than 3 consecutive days**.",
-      SERA_MANDATORY_DISCLAIMER,
-    ].join("\n\n");
+/**
+ * Helper to clean and extract the symptom/condition phrase from a user query
+ */
+export function extractSymptomPhrase(query: string): string {
+  const safe = (query || "").trim();
+  if (!safe) return "your symptoms";
+
+  let cleaned = safe
+    .replace(/^["'\s]+|["'\s]+$/g, "")
+    .replace(/\b(i have|i'm having|i am having|i'm experiencing|i am experiencing|i feel|i'm feeling|i am feeling|suffering from|dealing with|struggling with|what to do for|what can i take for|what should i take for|how to treat|how do i treat|remedy for|cure for|help with|relief for|medicine for|meds for|treatment for|can i take something for)\b/gi, "")
+    .replace(/[?!.,;]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!cleaned || cleaned.length < 2) {
+    return safe.replace(/[?!.,;]+/g, "").trim() || "your symptoms";
   }
-  if (lower.includes("headache") || lower.includes("migraine")) {
-    return [
-      "I'm sorry you're dealing with a **Headache or Migraine**. Here is helpful guidance on what may be causing it and how to find relief safely:",
-      "### Likely Causes\n- **Tension, Stress, or Screen Strain:** Prolonged computer or phone use, poor posture, and skipped meals commonly trigger tension headaches.\n- **Dehydration or Sinus Pressure:** Mild fluid loss, lack of sleep, or sinus congestion can cause throbbing forehead or temple pain.",
-      "### Standard Over-the-Counter (OTC) Active Ingredients\n- **Paracetamol (500mg):** Gentle first-line analgesic for tension headaches (allow 4–6 hours between doses).\n- **Ibuprofen (200mg – 400mg) or Aspirin (325mg):** Effective for inflammatory or migraine pain; always take after food with a full glass of water.\n- *Precaution:* Avoid taking multiple painkillers together (especially combining two NSAIDs like Ibuprofen and Aspirin).",
-      "### Clear Home Care Steps\n- **Hydrate Immediately:** Drink two large glasses of water right away.\n- **Dark, Quiet Rest:** Close your eyes in a cool, darkened room away from bright screens for 20–30 minutes.\n- **Cool or Warm Compress:** Apply a cold pack to your forehead or a warm compress to tight neck and shoulder muscles.",
-      "### Crucial 'Red-Flag' Warning Signs\nSeek immediate emergency medical attention if you experience:\n- A sudden, severe **'thunderclap' headache** that reaches maximum pain within seconds or minutes.\n- Headache accompanied by **slurred speech, vision loss, weakness or numbness** on one side, or facial drooping.\n- High fever with a stiff neck, confusion, or a headache following a **head injury**.",
-      SERA_MANDATORY_DISCLAIMER,
-    ].join("\n\n");
+
+  // Capitalize properly if short phrase
+  if (cleaned.length <= 40) {
+    return cleaned;
   }
-  if (lower.includes("cough") || lower.includes("throat")) {
-    return [
-      "I'm sorry you're experiencing **Cough or Sore Throat** discomfort. Here is clear guidance to soothe your airway safely:",
-      "### Likely Causes\n- **Upper Respiratory Viral Cold:** Viral inflammation of the throat lining or bronchial airways.\n- **Post-Nasal Drip or Allergies:** Mucus trickling down the back of the throat, dry indoor air, or dust/pollen irritation.",
-      "### Standard Over-the-Counter (OTC) Active Ingredients\n- **Dextromethorphan (10mg – 20mg syrup/lozenge):** Helps calm dry, tickly, non-productive coughs, especially at night.\n- **Guaifenesin or Ambroxol Expectorants:** Best for wet, chesty coughs to thin mucus so it clears more easily.\n- **Benzydamine Throat Spray or Antiseptic Lozenges (Amylmetacresol / Dichlorobenzyl Alcohol):** Soothes raw throat pain.\n- *Precaution:* Do not suppress a heavy wet cough with dry-cough sedatives, and watch for drowsiness.",
-      "### Clear Home Care Steps\n- **Warm Salt-Water Gargle:** Gargle with 1/2 teaspoon of salt in a glass of warm water 3–4 times daily.\n- **Steam & Warm Fluids:** Inhale warm steam vapors and sip warm water or herbal tea with honey and ginger.\n- **Elevate Your Head:** Use an extra pillow when sleeping to reduce nighttime post-nasal drip.",
-      "### Crucial 'Red-Flag' Warning Signs\nSeek urgent medical care if you notice:\n- **Shortness of breath**, difficulty breathing, wheezing, or pain in your chest.\n- **Coughing up blood** or pink-tinged phlegm.\n- Inability to swallow saliva (drooling), severe neck swelling, or a high fever with pus on the tonsils.",
-      SERA_MANDATORY_DISCLAIMER,
-    ].join("\n\n");
+  return cleaned.slice(0, 40).trim();
+}
+
+/**
+ * Universal dynamic offline symptom fallback engine.
+ * Generates an empathetic, clinically grounded response tailored to the user's specific symptom/condition.
+ */
+export function getOfflineSymptomResponse(query: string): string {
+  const symptomText = extractSymptomPhrase(query);
+  const lower = (query || "").toLowerCase();
+
+  // 1. Dynamic Likely Causes & Triggers
+  let causesSection = "";
+  if (lower.includes("diarrhea") || lower.includes("loose stool") || lower.includes("stomach upset") || lower.includes("food poison")) {
+    causesSection = `- **Gastroenteritis or Viral Infection:** Common viral or mild bacterial pathogens irritating the gastrointestinal lining.
+- **Dietary Sensitivities & Food Triggers:** Recent intake of unfamiliar, contaminated, or highly greasy/spicy foods, or lactose intolerance.
+- **Medication Side Effects & Stress:** Acute stress or recent antibiotics disrupting natural gut microflora.`;
+  } else if (lower.includes("stomach") || lower.includes("cramp") || lower.includes("abdomen") || lower.includes("belly")) {
+    causesSection = `- **Digestive Irritation & Gas:** Trapped intestinal gas, indigestion (dyspepsia), or eating too quickly.
+- **Acid Gastritis or Dietary Triggers:** Excess gastric acid irritated by spicy, acidic foods, caffeine, or missed meals.
+- **Muscle Tension or Cramping:** Intestinal spasms following heavy meals, stress, or mild gastrointestinal bugs.`;
+  } else if (lower.includes("migraine") || lower.includes("headache")) {
+    causesSection = `- **Tension, Stress, or Screen Strain:** Extended screen exposure, eye fatigue, poor posture, and physical stress.
+- **Dehydration, Lack of Sleep, or Skipped Meals:** Blood vessel dilation and neurotransmitter fluctuations triggered by fluid deficits or sleep disruption.
+- **Sinus Pressure or Environmental Factors:** Weather shifts, loud environments, or nasal congestion triggering temple or forehead throbbing.`;
+  } else if (lower.includes("cold") || lower.includes("cough") || lower.includes("congestion") || lower.includes("runny nose") || lower.includes("sneeze") || lower.includes("throat")) {
+    causesSection = `- **Upper Respiratory Viral Infection:** Common rhinoviruses or coronaviruses causing mucosal inflammation across the nasal passages and throat.
+- **Seasonal Allergens & Environmental Dust:** Pollen, dry indoor heating, or irritants triggering histamine release and post-nasal drip.
+- **Airway Hypersensitivity:** Bronchial irritation following weather temperature shifts or dry night air.`;
+  } else if (lower.includes("fever") || lower.includes("chill")) {
+    causesSection = `- **Immune System Defense Activation:** Natural body temperature elevation orchestrated by white blood cells to combat viral or bacterial invaders.
+- **Systemic Viral Flu or Respiratory Virus:** Influenza or common respiratory viruses circulating seasonally.
+- **Physical Exertion or Heat Reaction:** Mild dehydration, inflammatory recovery, or recent immunization response.`;
+  } else if (lower.includes("allerg") || lower.includes("itch") || lower.includes("rash") || lower.includes("hive")) {
+    causesSection = `- **Histamine Release:** Mast cell activation following exposure to pollen, pet dander, mold, dust mites, or certain foods.
+- **Contact Dermatitis:** Local skin sensitivity from soaps, detergents, cosmetics, or topical fabrics.
+- **Environmental Irritants:** Dry air, heat, perspiration, or sudden temperature fluctuations.`;
+  } else if (lower.includes("nausea") || lower.includes("vomit")) {
+    causesSection = `- **Gastric Irritation or Motion Sensitivities:** Inner ear equilibrium disturbance or acute stomach lining sensitivity.
+- **Dietary Indiscretion or Viral Enteritis:** Ingestion of spoiled foods, excessive alcohol/caffeine, or mild stomach bugs.
+- **Acid Reflux or Medication Reaction:** Gastric reflux washing up into the esophagus or taking medications without food.`;
+  } else if (lower.includes("back") || lower.includes("muscle") || lower.includes("body ache") || lower.includes("joint")) {
+    causesSection = `- **Physical Strain & Overexertion:** Muscle fatigue from unaccustomed lifting, awkward sleeping postures, or prolonged sitting.
+- **Systemic Viral Inflammation:** Pro-inflammatory cytokines released during common viral illnesses causing generalized aches.
+- **Poor Ergonomics & Tension:** Chronic desk posture, lack of core support, or stress-induced muscle contraction.`;
+  } else {
+    causesSection = `- **Acute Physiological Stress or Mild Infection:** Transient immune or nervous system responses to everyday environmental stressors.
+- **Fatigue, Fluid Deficits, or Dietary Fluctuations:** Temporary imbalances from dehydration, irregular meal timings, or inadequate rest.
+- **Localized Inflammation or Irritation:** Natural, self-limiting tissue responses that typically resolve within 48 to 72 hours.`;
   }
-  if (lower.includes("acidity") || lower.includes("heartburn") || lower.includes("stomach")) {
-    return [
-      "I'm sorry you're feeling uncomfortable with **Acidity & Heartburn**. Here is what typically causes it and how to settle your stomach safely:",
-      "### Likely Causes\n- **Acid Reflux & Dietary Triggers:** Spicy, fried, fatty, or acidic meals, excess caffeine, or eating late at night.\n- **Gastritis or NSAID Irritation:** Taking painkillers on an empty stomach or high stress levels.",
-      "### Standard Over-the-Counter (OTC) Active Ingredients\n- **Antacids (Aluminium Hydroxide + Magnesium Hydroxide + Simethicone):** Neutralize stomach acid and relieve trapped gas within minutes.\n- **Famotidine (10mg – 20mg) or Omeprazole / Pantoprazole (20mg – 40mg):** Reduce acid production (proton pump inhibitors work best when taken 30 minutes before breakfast).\n- *Precaution:* Space antacids at least 2 hours apart from other medications so they don't block absorption.",
-      "### Clear Home Care Steps\n- **Stay Upright After Meals:** Avoid lying down flat for at least 2–3 hours after eating, and elevate the head of your bed slightly.\n- **Eat Smaller, Milder Meals:** Sip lukewarm water or chilled low-fat milk and avoid spicy foods, soda, coffee, and alcohol.",
-      "### Crucial 'Red-Flag' Warning Signs\nSeek emergency medical care immediately if you experience:\n- **Crushing or squeezing chest pain** radiating to your jaw, neck, back, or left arm (can mimic a heart attack).\n- **Vomiting blood** or dark material that looks like coffee grounds, or passing **black, tarry stools**.\n- Painful or blocked swallowing, persistent vomiting, or unexplained weight loss.",
-      SERA_MANDATORY_DISCLAIMER,
-    ].join("\n\n");
+
+  // 2. Dynamic OTC Relief Options
+  let otcSection = "";
+  if (lower.includes("diarrhea") || lower.includes("loose stool")) {
+    otcSection = `- **Oral Rehydration Salts (ORS):** The most critical first-line intervention; sip 200–300ml after every loose stool to replenish lost electrolytes and glucose.
+- **Loperamide (2mg):** Anti-motility agent for urgent acute relief in adults (initial 4mg dose, then 2mg after each unformed stool; maximum 8mg/day for OTC use; avoid if fever or blood in stool is present).
+- **Probiotic Supplements (Saccharomyces boulardii or Lactic Acid Bacillus):** Helps restore gut microbiome balance and reduce recovery time.
+- *Precaution:* Always maintain strict hydration; avoid anti-motility drugs if you suspect bacterial food poisoning with fever or bloody stools.`;
+  } else if (lower.includes("stomach") || lower.includes("cramp") || lower.includes("abdomen") || lower.includes("belly")) {
+    otcSection = `- **Antacids (Aluminium Hydroxide + Magnesium Hydroxide + Simethicone):** Rapidly neutralizes excess gastric acid and breaks down trapped gas bubbles within minutes.
+- **Famotidine (10mg – 20mg) or Omeprazole (20mg):** H2 blockers or proton pump inhibitors to calm acid secretion; best taken 30 minutes before a meal.
+- **Dicyclomine or Drotaverine (under pharmacist guidance):** Antispasmodics to ease severe abdominal muscle cramping.
+- *Precaution:* Space antacids at least 2 hours apart from any other prescription medications to avoid blocking their absorption.`;
+  } else if (lower.includes("migraine") || lower.includes("headache")) {
+    otcSection = `- **Paracetamol / Acetaminophen (500mg – 650mg):** Gentle first-line analgesic for tension headaches; take every 4–6 hours as needed (do not exceed 4,000mg in 24 hours).
+- **Ibuprofen (200mg – 400mg) or Naproxen (220mg):** Effective anti-inflammatory pain relief for throbbing migraine pain; always take with food or milk to safeguard the stomach.
+- **Paracetamol + Caffeine Combination:** Synergistic combination that enhances headache relief and absorption speed.
+- *Precaution:* Avoid using analgesics on more than 10–14 days per month to prevent medication-overuse (rebound) headaches.`;
+  } else if (lower.includes("cold") || lower.includes("cough") || lower.includes("congestion") || lower.includes("runny nose") || lower.includes("sneeze") || lower.includes("throat")) {
+    otcSection = `- **Dextromethorphan (10mg – 20mg):** Calms dry, tickly, non-productive coughs, especially to help with nighttime sleep.
+- **Guaifenesin (200mg – 400mg) or Ambroxol (30mg):** Expectorants that thin thick mucus secretions for productive chesty coughs.
+- **Cetirizine (10mg) or Chlorpheniramine (4mg):** Relieves sneezing, itchy eyes, and rhinorrhea (take at night if sedating).
+- **Paracetamol (500mg – 650mg):** Alleviates accompanying throat soreness, fever, and generalized malaise.
+- *Precaution:* Check labels of multi-symptom cold syrups carefully so you never accidentally duplicate Paracetamol doses.`;
+  } else if (lower.includes("fever") || lower.includes("chill")) {
+    otcSection = `- **Paracetamol (500mg – 650mg):** First-line antipyretic to gently bring down temperature and reduce shivering discomfort (dosing every 4–6 hours; maximum 4,000mg/day).
+- **Ibuprofen (200mg – 400mg):** Alternative anti-inflammatory antipyretic; always take after a meal or with milk.
+- *Precaution:* Never give Aspirin to children or teenagers with fever due to the risk of Reye's syndrome. Stay well hydrated.`;
+  } else if (lower.includes("allerg") || lower.includes("itch") || lower.includes("rash") || lower.includes("hive")) {
+    otcSection = `- **Cetirizine (10mg), Loratadine (10mg), or Fexofenadine (120mg):** Non-drowsy second-generation antihistamines for daytime allergy control.
+- **Calamine Lotion or 1% Hydrocortisone Cream:** Soothes localized itchy skin patches and redness.
+- *Precaution:* If facial swelling, lip numbness, or difficulty swallowing develops, treat as an emergency anaphylaxis alert.`;
+  } else {
+    otcSection = `- **Paracetamol / Acetaminophen (500mg):** Dependable general analgesic and antipyretic for aches, discomfort, or low-grade fever (maintain 4–6 hour intervals).
+- **Ibuprofen (200mg – 400mg):** Anti-inflammatory option for swelling or muscular pain; take strictly after meals.
+- **Oral Rehydration Salts (ORS) / Digestive Antacids:** For systemic hydration or mild stomach distress.
+- *Precaution:* Always choose single-ingredient formulations matched to your primary symptom and never combine two NSAIDs.`;
   }
-  return [
-    `I'm sorry to hear you're feeling unwell. Here is helpful educational guidance regarding your symptoms:`,
-    "### Likely Causes\n- Common acute symptoms are frequently triggered by self-limiting viral infections, mild dehydration, dietary changes, environmental allergens, or physical fatigue.",
-    "### Standard Over-the-Counter (OTC) Active Ingredients\n- **Paracetamol (500mg):** Standard option for fever or mild-to-moderate pain (keep doses 4–6 hours apart).\n- **Cetirizine (10mg) or Fexofenadine (120mg):** Standard antihistamines for sneezing, runny nose, or mild allergy symptoms.\n- **Oral Rehydration Salts (ORS) / Antacids:** Useful for digestive upset or fluid replacement.\n- *Precaution:* Always choose a single-ingredient product matched to your main symptom and read the package dosing label carefully.",
-    "### Clear Home Care Steps\n- **Hydration:** Drink plenty of water, clear soups, or electrolyte solutions throughout the day.\n- **Rest:** Give your body adequate sleep and avoid strenuous activity while recovering.",
-    "### Crucial 'Red-Flag' Warning Signs\nSeek immediate medical attention if you experience:\n- Difficulty breathing, chest pain, severe dizziness, confusion, or inability to keep fluids down.\n- High fever above **103°F (39.4°C)** or symptoms that worsen rapidly or persist beyond **3 days**.",
+
+  // 3. Dynamic Home Care & Recovery Steps
+  let homeCareSection = "";
+  if (lower.includes("diarrhea") || lower.includes("loose stool")) {
+    homeCareSection = `- **Prioritize Oral Rehydration:** Sip fluids continuously; drink small sips of water, ORS solutions, light coconut water, or clear broths every 15 minutes.
+- **B.R.A.T. Diet Approach:** Transition to bland, low-fiber foods such as Bananas, Rice, Applesauce, and Toast or plain crackers once nausea subsides.
+- **Avoid Gut Irritants:** Strictly steer clear of dairy products, caffeine, carbonated sodas, greasy fried foods, and artificial sweeteners until stools normalize.
+- **Rest & Hand Hygiene:** Allow physical rest and wash hands thoroughly with soap to prevent spreading contagious viral gastroenteritis.`;
+  } else if (lower.includes("stomach") || lower.includes("cramp") || lower.includes("abdomen") || lower.includes("belly")) {
+    homeCareSection = `- **Apply Gentle Warmth:** Place a warm heating pad or hot water bottle across your abdomen for 15–20 minutes to relax cramped smooth muscles.
+- **Sip Soothing Warm Teas:** Drink warm peppermint, ginger, or chamomile tea to ease gas bloating and encourage gastrointestinal relaxation.
+- **Eat Small, Frequent Meals:** Avoid overloading your stomach; choose plain, low-spice options like porridge, boiled potatoes, or clear soups.
+- **Stay Upright:** Avoid lying down flat for at least 2 hours after drinking fluids or eating.`;
+  } else if (lower.includes("migraine") || lower.includes("headache")) {
+    homeCareSection = `- **Dark, Quiet Retreat:** Rest in a cool, quiet, darkened room away from phone screens, television, and harsh fluorescent lighting for at least 30 minutes.
+- **Rapid Rehydration:** Drink two large glasses of cool water immediately, as mild dehydration is among the most frequent headache triggers.
+- **Temperature Therapy:** Place a cold gel compress on your forehead or temples, or apply a warm cloth to tight neck and shoulder muscles.
+- **Gentle Pressure Point Massage:** Gently rub your temples and the webbed area between your thumb and index finger (LI-4 pressure point).`;
+  } else if (lower.includes("cold") || lower.includes("cough") || lower.includes("congestion") || lower.includes("throat")) {
+    homeCareSection = `- **Warm Salt-Water Gargle:** Dissolve 1/2 teaspoon of salt in a cup of warm water and gargle for 30 seconds, 3 to 4 times a day, to reduce throat swelling.
+- **Steam Inhalation:** Inhale warm steam from a facial steamer or hot shower to liquefy congested mucus and ease breathing.
+- **Warm Honey & Lemon Drinks:** Sip warm water with a teaspoon of honey (soothes coughing naturally for anyone over 1 year of age).
+- **Elevate Your Head at Night:** Use an additional pillow while sleeping to prevent mucus pooling and post-nasal drip cough spasms.`;
+  } else {
+    homeCareSection = `- **Targeted Hydration:** Drink plenty of water, herbal infusions, or electrolyte solutions across the day to support cellular healing.
+- **Restorative Sleep:** Minimize physical exertion and get at least 7 to 9 hours of sleep to give your immune system dedicated recovery bandwidth.
+- **Stress Reduction & Pacing:** Take restful pauses and avoid heavy physical exercise until baseline energy returns.
+- **Gentle Environmental Comfort:** Maintain a well-ventilated, comfortable room temperature and avoid smoke, strong chemicals, or dusty environments.`;
+  }
+
+  // 4. Dynamic Red-Flag Warning Signs
+  let redFlagsSection = "";
+  if (lower.includes("diarrhea") || lower.includes("loose stool")) {
+    redFlagsSection = `Seek immediate emergency medical evaluation if you experience:
+- Inability to keep fluids down for over **12 hours** or signs of severe dehydration (extreme thirst, dry mouth, little to no urination, sunken eyes, severe dizziness).
+- Presence of **blood, black tarry color, or pus** in stools.
+- Severe, unbearable abdominal or cramping pain, or a high fever exceeding **102°F (38.9°C)**.
+- Diarrhea that continues without improvement for **more than 48 hours**.`;
+  } else if (lower.includes("stomach") || lower.includes("cramp") || lower.includes("abdomen") || lower.includes("belly")) {
+    redFlagsSection = `Seek emergency medical care immediately if you notice:
+- **Severe, sudden, or rigid abdominal pain** (a hard, board-like abdomen tender to the lightest touch).
+- **Vomiting blood** or dark material resembling coffee grounds, or passing black, tarry stools.
+- Pain radiating into your chest, back, jaw, or shoulder, or accompanied by shortness of breath and cold sweats.
+- Inability to pass bowel movements or gas accompanied by persistent projectile vomiting.`;
+  } else if (lower.includes("migraine") || lower.includes("headache")) {
+    redFlagsSection = `Seek immediate emergency medical care if you notice:
+- A sudden, excruciating **'thunderclap' headache** reaching peak intensity within seconds or minutes.
+- Neurological deficits: **slurred speech, vision loss, numbness, weakness** on one side of your body, or facial drooping.
+- Severe headache accompanied by a **stiff neck, high fever, confusion**, or following a recent head trauma.`;
+  } else if (lower.includes("cold") || lower.includes("cough") || lower.includes("throat")) {
+    redFlagsSection = `Seek urgent medical evaluation if you notice:
+- **Shortness of breath**, persistent wheezing, stridor, or severe chest tightness/pain with every breath.
+- **Coughing up blood** or rust-colored phlegm.
+- Inability to swallow liquids or saliva (drooling), severe neck swelling, or high fever lasting **more than 3 consecutive days**.`;
+  } else {
+    redFlagsSection = `Seek immediate emergency medical care if you observe any of the following:
+- **Shortness of breath, chest pressure, severe dizziness**, confusion, or fainting.
+- High fever rising above **103°F (39.4°C)** or fever unresponsive to standard antipyretics.
+- Unbearable, rapidly worsening pain, or symptoms persisting for **more than 48 to 72 hours** without improvement.`;
+  }
+
+  const sections = [
+    `I'm so sorry to hear you're dealing with **${symptomText}**. Dealing with this can be truly exhausting, and finding gentle, effective relief is the top priority. Here is structured clinical guidance to help you navigate this safely:`,
+    `### Likely Causes & Triggers\n${causesSection}`,
+    `### Over-the-Counter Relief Options\n${otcSection}`,
+    `### Home Care & Recovery Steps\n${homeCareSection}`,
+    `### Red-Flag Warning Signs\n${redFlagsSection}`,
+    `*Note: Live AI synthesis is temporarily offline. This guidance is grounded in SERA's offline safety guidelines.*`,
     SERA_MANDATORY_DISCLAIMER,
-  ].join("\n\n");
+  ];
+
+  return sections.join("\n\n");
+}
+
+/**
+ * Backward-compatible wrapper for buildServerSymptomFallbackText
+ */
+export function buildServerSymptomFallbackText(prompt: string): string {
+  return getOfflineSymptomResponse(prompt);
 }
 
 /**
@@ -278,7 +447,8 @@ export async function executeRagQuery(
         throw new Error("Gemini API key is missing on server; using Symptom Overview & Precaution fallback.");
       }
 
-      const symptomModels = ["gemini-2.5-flash", "gemini-3.8-flash", "gemini-flash-latest"];
+      // Primary model: 'gemini-3.8-flash', Fallback chain: 'gemini-3.8-pro', 'gemini-2.5-flash'
+      const symptomModels = ["gemini-3.8-flash", "gemini-3.8-pro", "gemini-2.5-flash"];
       let answerText = "";
       for (const modelName of symptomModels) {
         try {
@@ -321,7 +491,7 @@ export async function executeRagQuery(
         answer: String(symptomFallbackText),
         retrievedMedicines: [],
         isAvailableInDataset: true,
-        usedDeterministicFallback: false,
+        usedDeterministicFallback: true,
         isSymptomQuery: true,
         query: userPrompt,
       };
@@ -437,7 +607,8 @@ User Query: "${userPrompt}"`;
     }
 
     let answerText = "";
-    const candidateModels = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.5-flash"];
+    // Primary model: 'gemini-3.8-flash', Fallback chain: 'gemini-3.8-pro', 'gemini-2.5-flash'
+    const candidateModels = ["gemini-3.8-flash", "gemini-3.8-pro", "gemini-2.5-flash"];
     for (const modelName of candidateModels) {
       try {
         const response = await ai.models.generateContent({
@@ -482,8 +653,14 @@ User Query: "${userPrompt}"`;
     // Graceful fallback if Gemini API hits 503, 404, quota limit, or network error
     console.warn("Using grounded deterministic SERA response (Gemini API fallback):", err?.message || err);
 
+    // If query has health or symptom characteristics or no confirmed drug pairs, provide universal offline symptom response
+    const isHealthQuery = isServerSymptomQuery(userPrompt, selectedDrugs) || (extractedDrugs.length === 0 && !interactionAnalysis);
+    const finalFallbackAnswer = isHealthQuery
+      ? getOfflineSymptomResponse(userPrompt)
+      : String(deterministicResponse || getOfflineSymptomResponse(userPrompt));
+
     return {
-      answer: String(deterministicResponse || "No verified data found in SERA database."),
+      answer: finalFallbackAnswer,
       retrievedMedicines: (retrieved || []).map((r) => ({
         name: r.record.name,
         matchType: r.matchType,
@@ -493,6 +670,7 @@ User Query: "${userPrompt}"`;
       interactionAnalysis,
       isAvailableInDataset: true,
       usedDeterministicFallback: true,
+      isSymptomQuery: isHealthQuery,
       query: userPrompt,
     };
   }
