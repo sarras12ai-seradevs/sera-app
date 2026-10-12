@@ -106,6 +106,9 @@ export function isServerSymptomQuery(prompt: string, selectedDrugs?: string[]): 
     "loose stools & diarrhea",
     "diarrhea",
     "loose stools",
+    "loose motion",
+    "nasal",
+    "runny",
     "constipation & hard stools",
     "constipation",
     "muscle strain & back ache",
@@ -115,6 +118,7 @@ export function isServerSymptomQuery(prompt: string, selectedDrugs?: string[]): 
     "back pain",
     "stomach pain",
     "stomach ache",
+    "stomach",
     "cramps",
     "body ache",
     "body pain",
@@ -161,142 +165,136 @@ export function getOfflineSymptomResponse(query: string): string {
   const symptomText = extractSymptomPhrase(query);
   const lower = (query || "").toLowerCase();
 
-  // 1. Dynamic Likely Causes & Triggers
+  // Explicit Intent Branches requested:
+  // 1. Cold & Respiratory ('cold', 'cough', 'nasal', 'runny', 'sneeze', 'congestion', 'sore throat')
+  const isColdRespiratory =
+    lower.includes("cold") ||
+    lower.includes("cough") ||
+    lower.includes("nasal") ||
+    lower.includes("runny") ||
+    lower.includes("sneeze") ||
+    lower.includes("congestion") ||
+    lower.includes("throat") ||
+    lower.includes("bronchitis");
+
+  // 2. Gastrointestinal & ORS ('diarrhea', 'stomach', 'loose motion', 'loose stool', 'belly', 'abdomen', 'cramp', 'vomit', 'nausea', 'acidity', 'gas')
+  const isGastrointestinal =
+    lower.includes("diarrhea") ||
+    lower.includes("stomach") ||
+    lower.includes("loose motion") ||
+    lower.includes("loose stool") ||
+    lower.includes("belly") ||
+    lower.includes("abdomen") ||
+    lower.includes("cramp") ||
+    lower.includes("food poison") ||
+    lower.includes("gastro") ||
+    lower.includes("nausea") ||
+    lower.includes("vomit") ||
+    lower.includes("acidity") ||
+    lower.includes("heartburn") ||
+    lower.includes("gas") ||
+    lower.includes("indigestion");
+
+  // 3. Fever & Body Pain ('fever', 'chills', 'headache', 'migraine', 'body ache', 'body pain', 'joint pain', 'muscle', 'back pain')
+  const isFeverBodyPain =
+    lower.includes("fever") ||
+    lower.includes("chill") ||
+    lower.includes("headache") ||
+    lower.includes("migraine") ||
+    lower.includes("body ache") ||
+    lower.includes("body pain") ||
+    lower.includes("muscle") ||
+    lower.includes("joint pain") ||
+    lower.includes("back ache") ||
+    lower.includes("back pain");
+
   let causesSection = "";
-  if (lower.includes("diarrhea") || lower.includes("loose stool") || lower.includes("stomach upset") || lower.includes("food poison")) {
-    causesSection = `- **Gastroenteritis or Viral Infection:** Common viral or mild bacterial pathogens irritating the gastrointestinal lining.
-- **Dietary Sensitivities & Food Triggers:** Recent intake of unfamiliar, contaminated, or highly greasy/spicy foods, or lactose intolerance.
-- **Medication Side Effects & Stress:** Acute stress or recent antibiotics disrupting natural gut microflora.`;
-  } else if (lower.includes("stomach") || lower.includes("cramp") || lower.includes("abdomen") || lower.includes("belly")) {
-    causesSection = `- **Digestive Irritation & Gas:** Trapped intestinal gas, indigestion (dyspepsia), or eating too quickly.
-- **Acid Gastritis or Dietary Triggers:** Excess gastric acid irritated by spicy, acidic foods, caffeine, or missed meals.
-- **Muscle Tension or Cramping:** Intestinal spasms following heavy meals, stress, or mild gastrointestinal bugs.`;
-  } else if (lower.includes("migraine") || lower.includes("headache")) {
-    causesSection = `- **Tension, Stress, or Screen Strain:** Extended screen exposure, eye fatigue, poor posture, and physical stress.
-- **Dehydration, Lack of Sleep, or Skipped Meals:** Blood vessel dilation and neurotransmitter fluctuations triggered by fluid deficits or sleep disruption.
-- **Sinus Pressure or Environmental Factors:** Weather shifts, loud environments, or nasal congestion triggering temple or forehead throbbing.`;
-  } else if (lower.includes("cold") || lower.includes("cough") || lower.includes("congestion") || lower.includes("runny nose") || lower.includes("sneeze") || lower.includes("throat")) {
-    causesSection = `- **Upper Respiratory Viral Infection:** Common rhinoviruses or coronaviruses causing mucosal inflammation across the nasal passages and throat.
-- **Seasonal Allergens & Environmental Dust:** Pollen, dry indoor heating, or irritants triggering histamine release and post-nasal drip.
-- **Airway Hypersensitivity:** Bronchial irritation following weather temperature shifts or dry night air.`;
-  } else if (lower.includes("fever") || lower.includes("chill")) {
-    causesSection = `- **Immune System Defense Activation:** Natural body temperature elevation orchestrated by white blood cells to combat viral or bacterial invaders.
-- **Systemic Viral Flu or Respiratory Virus:** Influenza or common respiratory viruses circulating seasonally.
-- **Physical Exertion or Heat Reaction:** Mild dehydration, inflammatory recovery, or recent immunization response.`;
-  } else if (lower.includes("allerg") || lower.includes("itch") || lower.includes("rash") || lower.includes("hive")) {
-    causesSection = `- **Histamine Release:** Mast cell activation following exposure to pollen, pet dander, mold, dust mites, or certain foods.
-- **Contact Dermatitis:** Local skin sensitivity from soaps, detergents, cosmetics, or topical fabrics.
-- **Environmental Irritants:** Dry air, heat, perspiration, or sudden temperature fluctuations.`;
-  } else if (lower.includes("nausea") || lower.includes("vomit")) {
-    causesSection = `- **Gastric Irritation or Motion Sensitivities:** Inner ear equilibrium disturbance or acute stomach lining sensitivity.
-- **Dietary Indiscretion or Viral Enteritis:** Ingestion of spoiled foods, excessive alcohol/caffeine, or mild stomach bugs.
-- **Acid Reflux or Medication Reaction:** Gastric reflux washing up into the esophagus or taking medications without food.`;
-  } else if (lower.includes("back") || lower.includes("muscle") || lower.includes("body ache") || lower.includes("joint")) {
-    causesSection = `- **Physical Strain & Overexertion:** Muscle fatigue from unaccustomed lifting, awkward sleeping postures, or prolonged sitting.
-- **Systemic Viral Inflammation:** Pro-inflammatory cytokines released during common viral illnesses causing generalized aches.
-- **Poor Ergonomics & Tension:** Chronic desk posture, lack of core support, or stress-induced muscle contraction.`;
-  } else {
-    causesSection = `- **Acute Physiological Stress or Mild Infection:** Transient immune or nervous system responses to everyday environmental stressors.
-- **Fatigue, Fluid Deficits, or Dietary Fluctuations:** Temporary imbalances from dehydration, irregular meal timings, or inadequate rest.
-- **Localized Inflammation or Irritation:** Natural, self-limiting tissue responses that typically resolve within 48 to 72 hours.`;
-  }
-
-  // 2. Dynamic OTC Relief Options
   let otcSection = "";
-  if (lower.includes("diarrhea") || lower.includes("loose stool")) {
-    otcSection = `- **Oral Rehydration Salts (ORS):** The most critical first-line intervention; sip 200–300ml after every loose stool to replenish lost electrolytes and glucose.
-- **Loperamide (2mg):** Anti-motility agent for urgent acute relief in adults (initial 4mg dose, then 2mg after each unformed stool; maximum 8mg/day for OTC use; avoid if fever or blood in stool is present).
-- **Probiotic Supplements (Saccharomyces boulardii or Lactic Acid Bacillus):** Helps restore gut microbiome balance and reduce recovery time.
-- *Precaution:* Always maintain strict hydration; avoid anti-motility drugs if you suspect bacterial food poisoning with fever or bloody stools.`;
-  } else if (lower.includes("stomach") || lower.includes("cramp") || lower.includes("abdomen") || lower.includes("belly")) {
-    otcSection = `- **Antacids (Aluminium Hydroxide + Magnesium Hydroxide + Simethicone):** Rapidly neutralizes excess gastric acid and breaks down trapped gas bubbles within minutes.
-- **Famotidine (10mg – 20mg) or Omeprazole (20mg):** H2 blockers or proton pump inhibitors to calm acid secretion; best taken 30 minutes before a meal.
-- **Dicyclomine or Drotaverine (under pharmacist guidance):** Antispasmodics to ease severe abdominal muscle cramping.
-- *Precaution:* Space antacids at least 2 hours apart from any other prescription medications to avoid blocking their absorption.`;
-  } else if (lower.includes("migraine") || lower.includes("headache")) {
-    otcSection = `- **Paracetamol / Acetaminophen (500mg – 650mg):** Gentle first-line analgesic for tension headaches; take every 4–6 hours as needed (do not exceed 4,000mg in 24 hours).
-- **Ibuprofen (200mg – 400mg) or Naproxen (220mg):** Effective anti-inflammatory pain relief for throbbing migraine pain; always take with food or milk to safeguard the stomach.
-- **Paracetamol + Caffeine Combination:** Synergistic combination that enhances headache relief and absorption speed.
-- *Precaution:* Avoid using analgesics on more than 10–14 days per month to prevent medication-overuse (rebound) headaches.`;
-  } else if (lower.includes("cold") || lower.includes("cough") || lower.includes("congestion") || lower.includes("runny nose") || lower.includes("sneeze") || lower.includes("throat")) {
-    otcSection = `- **Dextromethorphan (10mg – 20mg):** Calms dry, tickly, non-productive coughs, especially to help with nighttime sleep.
-- **Guaifenesin (200mg – 400mg) or Ambroxol (30mg):** Expectorants that thin thick mucus secretions for productive chesty coughs.
-- **Cetirizine (10mg) or Chlorpheniramine (4mg):** Relieves sneezing, itchy eyes, and rhinorrhea (take at night if sedating).
-- **Paracetamol (500mg – 650mg):** Alleviates accompanying throat soreness, fever, and generalized malaise.
-- *Precaution:* Check labels of multi-symptom cold syrups carefully so you never accidentally duplicate Paracetamol doses.`;
-  } else if (lower.includes("fever") || lower.includes("chill")) {
-    otcSection = `- **Paracetamol (500mg – 650mg):** First-line antipyretic to gently bring down temperature and reduce shivering discomfort (dosing every 4–6 hours; maximum 4,000mg/day).
-- **Ibuprofen (200mg – 400mg):** Alternative anti-inflammatory antipyretic; always take after a meal or with milk.
-- *Precaution:* Never give Aspirin to children or teenagers with fever due to the risk of Reye's syndrome. Stay well hydrated.`;
-  } else if (lower.includes("allerg") || lower.includes("itch") || lower.includes("rash") || lower.includes("hive")) {
-    otcSection = `- **Cetirizine (10mg), Loratadine (10mg), or Fexofenadine (120mg):** Non-drowsy second-generation antihistamines for daytime allergy control.
-- **Calamine Lotion or 1% Hydrocortisone Cream:** Soothes localized itchy skin patches and redness.
-- *Precaution:* If facial swelling, lip numbness, or difficulty swallowing develops, treat as an emergency anaphylaxis alert.`;
-  } else {
-    otcSection = `- **Paracetamol / Acetaminophen (500mg):** Dependable general analgesic and antipyretic for aches, discomfort, or low-grade fever (maintain 4–6 hour intervals).
-- **Ibuprofen (200mg – 400mg):** Anti-inflammatory option for swelling or muscular pain; take strictly after meals.
-- **Oral Rehydration Salts (ORS) / Digestive Antacids:** For systemic hydration or mild stomach distress.
-- *Precaution:* Always choose single-ingredient formulations matched to your primary symptom and never combine two NSAIDs.`;
-  }
-
-  // 3. Dynamic Home Care & Recovery Steps
   let homeCareSection = "";
-  if (lower.includes("diarrhea") || lower.includes("loose stool")) {
-    homeCareSection = `- **Prioritize Oral Rehydration:** Sip fluids continuously; drink small sips of water, ORS solutions, light coconut water, or clear broths every 15 minutes.
-- **B.R.A.T. Diet Approach:** Transition to bland, low-fiber foods such as Bananas, Rice, Applesauce, and Toast or plain crackers once nausea subsides.
-- **Avoid Gut Irritants:** Strictly steer clear of dairy products, caffeine, carbonated sodas, greasy fried foods, and artificial sweeteners until stools normalize.
-- **Rest & Hand Hygiene:** Allow physical rest and wash hands thoroughly with soap to prevent spreading contagious viral gastroenteritis.`;
-  } else if (lower.includes("stomach") || lower.includes("cramp") || lower.includes("abdomen") || lower.includes("belly")) {
-    homeCareSection = `- **Apply Gentle Warmth:** Place a warm heating pad or hot water bottle across your abdomen for 15–20 minutes to relax cramped smooth muscles.
-- **Sip Soothing Warm Teas:** Drink warm peppermint, ginger, or chamomile tea to ease gas bloating and encourage gastrointestinal relaxation.
-- **Eat Small, Frequent Meals:** Avoid overloading your stomach; choose plain, low-spice options like porridge, boiled potatoes, or clear soups.
-- **Stay Upright:** Avoid lying down flat for at least 2 hours after drinking fluids or eating.`;
-  } else if (lower.includes("migraine") || lower.includes("headache")) {
-    homeCareSection = `- **Dark, Quiet Retreat:** Rest in a cool, quiet, darkened room away from phone screens, television, and harsh fluorescent lighting for at least 30 minutes.
-- **Rapid Rehydration:** Drink two large glasses of cool water immediately, as mild dehydration is among the most frequent headache triggers.
-- **Temperature Therapy:** Place a cold gel compress on your forehead or temples, or apply a warm cloth to tight neck and shoulder muscles.
-- **Gentle Pressure Point Massage:** Gently rub your temples and the webbed area between your thumb and index finger (LI-4 pressure point).`;
-  } else if (lower.includes("cold") || lower.includes("cough") || lower.includes("congestion") || lower.includes("throat")) {
-    homeCareSection = `- **Warm Salt-Water Gargle:** Dissolve 1/2 teaspoon of salt in a cup of warm water and gargle for 30 seconds, 3 to 4 times a day, to reduce throat swelling.
-- **Steam Inhalation:** Inhale warm steam from a facial steamer or hot shower to liquefy congested mucus and ease breathing.
-- **Warm Honey & Lemon Drinks:** Sip warm water with a teaspoon of honey (soothes coughing naturally for anyone over 1 year of age).
-- **Elevate Your Head at Night:** Use an additional pillow while sleeping to prevent mucus pooling and post-nasal drip cough spasms.`;
-  } else {
-    homeCareSection = `- **Targeted Hydration:** Drink plenty of water, herbal infusions, or electrolyte solutions across the day to support cellular healing.
-- **Restorative Sleep:** Minimize physical exertion and get at least 7 to 9 hours of sleep to give your immune system dedicated recovery bandwidth.
-- **Stress Reduction & Pacing:** Take restful pauses and avoid heavy physical exercise until baseline energy returns.
-- **Gentle Environmental Comfort:** Maintain a well-ventilated, comfortable room temperature and avoid smoke, strong chemicals, or dusty environments.`;
-  }
-
-  // 4. Dynamic Red-Flag Warning Signs
   let redFlagsSection = "";
-  if (lower.includes("diarrhea") || lower.includes("loose stool")) {
-    redFlagsSection = `Seek immediate emergency medical evaluation if you experience:
-- Inability to keep fluids down for over **12 hours** or signs of severe dehydration (extreme thirst, dry mouth, little to no urination, sunken eyes, severe dizziness).
-- Presence of **blood, black tarry color, or pus** in stools.
-- Severe, unbearable abdominal or cramping pain, or a high fever exceeding **102°F (38.9°C)**.
-- Diarrhea that continues without improvement for **more than 48 hours**.`;
-  } else if (lower.includes("stomach") || lower.includes("cramp") || lower.includes("abdomen") || lower.includes("belly")) {
-    redFlagsSection = `Seek emergency medical care immediately if you notice:
-- **Severe, sudden, or rigid abdominal pain** (a hard, board-like abdomen tender to the lightest touch).
-- **Vomiting blood** or dark material resembling coffee grounds, or passing black, tarry stools.
-- Pain radiating into your chest, back, jaw, or shoulder, or accompanied by shortness of breath and cold sweats.
-- Inability to pass bowel movements or gas accompanied by persistent projectile vomiting.`;
-  } else if (lower.includes("migraine") || lower.includes("headache")) {
-    redFlagsSection = `Seek immediate emergency medical care if you notice:
-- A sudden, excruciating **'thunderclap' headache** reaching peak intensity within seconds or minutes.
-- Neurological deficits: **slurred speech, vision loss, numbness, weakness** on one side of your body, or facial drooping.
-- Severe headache accompanied by a **stiff neck, high fever, confusion**, or following a recent head trauma.`;
-  } else if (lower.includes("cold") || lower.includes("cough") || lower.includes("throat")) {
-    redFlagsSection = `Seek urgent medical evaluation if you notice:
+
+  if (isColdRespiratory) {
+    causesSection = `- **Upper Respiratory Viral Infection:** Common rhinoviruses, coronaviruses, or respiratory syncytial agents inflaming mucosal linings across nasal passages and throat.
+- **Post-Nasal Drip & Cough Hypersensitivity:** Secretions trickling down the posterior airway triggering sensitive bronchial cough receptors.
+- **Seasonal Allergens & Dry Air:** Cold outdoor air, dusty indoor heating, or airborne pollen provoking histamine irritation.`;
+
+    otcSection = `- **Dextromethorphan (10mg – 20mg):** Suppresses dry, tickly, non-productive coughing fits, especially at bedtime for sound sleep.
+- **Guaifenesin (200mg – 400mg) or Ambroxol (30mg):** Clinically proven expectorants that liquefy thick chest mucus for easier clearing.
+- **Cetirizine (10mg) or Levocetirizine (5mg):** Non-drowsy second-generation antihistamines relieving runny nose, nasal itchiness, and frequent sneezing.
+- **Saline Nasal Spray (Isotonic 0.9%):** Safely clears blocked sinuses and rinses away trapped viral particles without chemical rebound.
+- **Paracetamol (500mg – 650mg):** Provides gentle relief for raw throat soreness, sinus pressure, and mild body malaise.
+- *Precaution:* Read labels on multi-symptom cold formulations carefully so you never inadvertently duplicate Paracetamol or antihistamine doses.`;
+
+    homeCareSection = `- **Warm Salt-Water Gargles:** Dissolve 1/2 teaspoon of salt in a glass of warm water and gargle for 30 seconds 3–4 times daily to reduce throat tissue swelling.
+- **Steam Inhalation:** Inhale warm moist steam from a bowl or facial steamer for 10–15 minutes twice daily to loosen nasal congestion.
+- **Warm Honey & Lemon Drinks:** Sip warm water with raw honey and lemon to coat irritated throat receptors (avoid honey in infants under 1 year).
+- **Head Elevation at Bedtime:** Prop your pillows up by 30 degrees to prevent nasal secretions from pooling and triggering night coughs.`;
+
+    redFlagsSection = `Seek prompt emergency or medical evaluation if you notice:
 - **Shortness of breath**, persistent wheezing, stridor, or severe chest tightness/pain with every breath.
 - **Coughing up blood** or rust-colored phlegm.
-- Inability to swallow liquids or saliva (drooling), severe neck swelling, or high fever lasting **more than 3 consecutive days**.`;
+- Inability to swallow liquids or saliva (drooling), severe neck swelling, or fever lasting **longer than 3 consecutive days**.`;
+  } else if (isGastrointestinal) {
+    causesSection = `- **Viral Gastroenteritis or Foodborne Bug:** Norovirus, rotavirus, or mild bacterial toxins irritating the stomach lining and intestinal mucosa.
+- **Electrolyte & Water Loss:** Accelerated intestinal motility rapidly depleting sodium, potassium, and fluid reserves.
+- **Dietary Sensitivity or Gastric Irritation:** Recent unaccustomed spicy/greasy food, acute emotional stress, or antibiotic disruption of normal gut microflora.`;
+
+    otcSection = `- **Oral Rehydration Salts (ORS — WHO Standard Formula):** The single most essential first-line clinical intervention; sip 200–300ml after every loose stool or vomiting episode to prevent dehydration and metabolic crisis.
+- **Loperamide (2mg):** Anti-motility agent for urgent acute diarrhea control in adults (take 4mg initially, then 2mg after each loose movement; maximum 8mg/day for OTC use; avoid if fever or blood is present).
+- **Probiotics (Saccharomyces boulardii or Bacillus clausii):** Replenishes beneficial gut flora and helps shorten the duration of diarrhea.
+- **Antacids (Aluminium/Magnesium Hydroxide + Simethicone):** Neutralizes excess stomach acid and breaks up painful trapped gas bubbles.
+- **Famotidine (10mg – 20mg) or Pantoprazole (40mg):** Calms acid secretion for burning epigastric discomfort; take 30 minutes before food.
+- *Precaution:* Never take anti-motility drugs if you have a high fever or notice blood/mucus in your stool. Maintain aggressive hydration.`;
+
+    homeCareSection = `- **Continuous Micro-Hydration:** Take small, frequent sips of prepared ORS, clear broths, coconut water, or rice water every 10–15 minutes rather than large chugs.
+- **B.R.A.T. Diet Protocol:** Once nausea eases, stick strictly to bland, gentle foods: Bananas, Rice, Applesauce, and plain Toast or crackers.
+- **Strict Avoidance of Gut Irritants:** Avoid milk and dairy, caffeinated drinks, alcohol, sodas, oily fried foods, and spicy seasonings until stools normalize.
+- **Warmth & Rest:** Place a warm heating bottle across the lower abdomen to ease cramping and get plenty of quiet bed rest.`;
+
+    redFlagsSection = `Seek emergency medical care immediately if you notice:
+- Signs of **severe dehydration**: extreme thirst, dry tongue/mouth, no urine output for over 8 hours, sunken eyes, or severe dizziness upon standing.
+- Presence of **blood, black tarry color, or pus** in stool or vomit.
+- Severe, rigid, or unrelenting abdominal pain that is exquisitely tender to the touch.
+- Inability to keep any liquids down for **more than 12–24 hours** or diarrhea continuing beyond 48 hours.`;
+  } else if (isFeverBodyPain) {
+    causesSection = `- **Immune System Thermostat Elevation:** Natural defense response where endogenous pyrogens prompt the hypothalamus to elevate body temperature and hinder viral replication.
+- **Viral Flu, Infection, or Inflammatory Viremia:** Pro-inflammatory cytokines circulating systemically, causing generalized muscle aching and headache.
+- **Tension, Dehydration, or Muscular Overexertion:** Inadequate water intake, prolonged screen fatigue, poor posture, or lack of sleep triggering muscle spasms and head pain.`;
+
+    otcSection = `- **Paracetamol / Acetaminophen (500mg – 650mg):** First-line antipyretic and analgesic; gently brings down fever and relieves headache/body aches (dosing interval 4–6 hours; maximum 4,000mg in 24 hours).
+- **Ibuprofen (200mg – 400mg):** Highly effective anti-inflammatory antipyretic for throbbing headaches, joint swelling, or muscular aches; always take with food, milk, or a meal.
+- *Precaution:* Never combine two NSAIDs (e.g., Ibuprofen + Aspirin). Never administer Aspirin to children or teenagers with fever due to Reye's syndrome risk. Do not duplicate Paracetamol in combination cold/fever tablets.`;
+
+    homeCareSection = `- **Passive Tepid Sponge Cooling:** Apply a damp lukewarm washcloth across the forehead, neck, and armpits; avoid ice-cold water or alcohol rubs as they cause violent shivering.
+- **Light Cotton Clothing:** Dress in loose, breathable garments and avoid heavy blankets that trap excess thermal heat.
+- **Abundant Hydration:** Drink at least 2.5 to 3 liters of water, warm broths, electrolyte fluids, or coconut water to replenish perspiration loss.
+- **Rest in a Cool, Dark Room:** Minimize screens and loud noise; rest with eyes closed for at least 8 to 10 hours to allow immune recovery.`;
+
+    redFlagsSection = `Seek immediate emergency medical evaluation if you observe:
+- Body temperature rising above **103°F (39.4°C)** or fever unresponsive to standard antipyretics after several hours.
+- Fever accompanied by a **stiff neck, confusion, extreme drowsiness, rash, or intense light sensitivity**.
+- Sudden explosive **'thunderclap' headache** reaching maximum pain within seconds, or headache accompanied by slurred speech, facial drooping, or one-sided weakness.
+- High fever or debilitating pain persisting for **longer than 3 consecutive days**.`;
   } else {
-    redFlagsSection = `Seek immediate emergency medical care if you observe any of the following:
-- **Shortness of breath, chest pressure, severe dizziness**, confusion, or fainting.
-- High fever rising above **103°F (39.4°C)** or fever unresponsive to standard antipyretics.
-- Unbearable, rapidly worsening pain, or symptoms persisting for **more than 48 to 72 hours** without improvement.`;
+    // 4. Universal Clinical Template for all other health / symptom queries
+    causesSection = `- **Acute Physiological Stress or Environmental Trigger:** Temporary nervous, muscular, or immune responses to daily fatigue, weather shifts, or mild localized tissue irritation.
+- **Fluid Deficits or Ergonomic Strain:** Subtle dehydration, irregular meal timings, prolonged static posture, or minor tissue inflammation.
+- **Self-Limiting Body Reaction:** Natural, transient defense mechanism that typically resolves spontaneously within 48 to 72 hours.`;
+
+    otcSection = `- **Paracetamol / Acetaminophen (500mg):** Dependable baseline analgesic and antipyretic for generalized aches, discomfort, or low-grade temperature (space 4–6 hours apart; max 4,000mg/day).
+- **Ibuprofen (200mg – 400mg):** Anti-inflammatory option if localized swelling, strain, or tooth/muscular ache is present; take strictly after meals.
+- **Oral Rehydration Salts (ORS) or Antacids:** For systemic fluid equilibrium or mild digestive discomfort.
+- *Precaution:* Always choose single-ingredient formulations matched to your primary symptom. Take NSAIDs strictly with food and check labels to avoid duplicate active ingredients.`;
+
+    homeCareSection = `- **Restorative Hydration:** Drink plenty of water, electrolyte solutions, or warm herbal infusions across the day.
+- **Sufficient Bed Rest:** Get at least 7 to 9 hours of uninterrupted sleep to give your immune system dedicated healing bandwidth.
+- **Avoid Overexertion:** Postpone intense physical workouts, take restful pauses, and avoid stress triggers.
+- **Comfortable Environment:** Rest in a well-ventilated, moderate-temperature room away from strong irritants, smoke, or excessive noise.`;
+
+    redFlagsSection = `Seek immediate emergency medical evaluation if you experience:
+- **Shortness of breath, chest pressure, severe dizziness**, disorientation, or fainting.
+- High fever rising above **103°F (39.4°C)** or sudden unbearable, rapidly escalating pain.
+- Debilitating symptoms persisting for **more than 48 to 72 hours** without improvement.`;
   }
 
   const sections = [

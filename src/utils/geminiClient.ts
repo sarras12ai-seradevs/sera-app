@@ -156,6 +156,9 @@ export function isSymptomQuery(prompt: string, selectedDrugs?: string[]): boolea
     "loose stools & diarrhea",
     "diarrhea",
     "loose stools",
+    "loose motion",
+    "nasal",
+    "runny",
     "constipation & hard stools",
     "constipation",
     "muscle strain & back ache",
@@ -165,6 +168,7 @@ export function isSymptomQuery(prompt: string, selectedDrugs?: string[]): boolea
     "back pain",
     "stomach pain",
     "stomach ache",
+    "stomach",
     "cramps",
     "body ache",
     "body pain",
@@ -185,16 +189,58 @@ export function buildSymptomFallbackData(prompt: string): LocalRagFallbackData {
   const safePrompt = typeof prompt === "string" ? prompt : String(prompt || "");
   const lower = safePrompt.toLowerCase();
 
-  const matchedSymptom =
-    symptomsData.find(
-      (s) =>
-        lower.includes(s.name.toLowerCase()) ||
-        lower.includes(s.id.toLowerCase()) ||
-        s.name
-          .toLowerCase()
-          .split(/\s*&\s*|\s+/)
-          .some((word) => word.length >= 4 && lower.includes(word))
-    ) || symptomsData[0];
+  const isColdRespiratory =
+    lower.includes("cold") ||
+    lower.includes("cough") ||
+    lower.includes("nasal") ||
+    lower.includes("runny") ||
+    lower.includes("sneeze") ||
+    lower.includes("congestion") ||
+    lower.includes("throat");
+
+  const isDiarrheaStomach =
+    lower.includes("diarrhea") ||
+    lower.includes("loose motion") ||
+    lower.includes("loose stool") ||
+    lower.includes("stomach") ||
+    lower.includes("belly") ||
+    lower.includes("cramp");
+
+  const isFeverHeadache =
+    lower.includes("fever") ||
+    lower.includes("chill") ||
+    lower.includes("headache") ||
+    lower.includes("migraine") ||
+    lower.includes("body pain") ||
+    lower.includes("body ache");
+
+  let matchedSymptom = symptomsData.find(
+    (s) =>
+      lower.includes(s.name.toLowerCase()) ||
+      lower.includes(s.id.toLowerCase()) ||
+      s.name
+        .toLowerCase()
+        .split(/\s*&\s*|\s+/)
+        .some((word) => word.length >= 4 && lower.includes(word))
+  );
+
+  if (!matchedSymptom) {
+    if (isColdRespiratory) {
+      matchedSymptom =
+        symptomsData.find((s) => s.id === "cough" || s.id === "runny-nose" || s.id === "sore-throat") ||
+        symptomsData[3];
+    } else if (isDiarrheaStomach) {
+      matchedSymptom =
+        symptomsData.find((s) => s.id === "diarrhea" || s.id === "acidity") ||
+        symptomsData[7];
+    } else if (isFeverHeadache) {
+      matchedSymptom =
+        symptomsData.find((s) => s.id === "fever" || s.id === "headache") ||
+        symptomsData[0];
+    } else {
+      matchedSymptom = symptomsData[0];
+    }
+  }
 
   const otcMeds = allMedicines.filter((m) => (matchedSymptom.otcMedicineIds || []).includes(m.id));
   const otcOptions =
