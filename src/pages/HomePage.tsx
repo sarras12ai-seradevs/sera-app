@@ -221,6 +221,9 @@ export const HomePage: React.FC<HomePageProps> = ({ onOpenSearch, onOpenAiAssist
 
                 <p className="text-base text-slate-700 dark:text-slate-300 leading-relaxed max-w-2xl">
                   Look up over-the-counter brand formulations, verify active generic ingredients, check maximum daily dosage limits, and screen multi-drug combinations for clinical contraindications.
+                  <span className="block mt-1.5 text-xs sm:text-sm text-slate-500 dark:text-slate-400 font-normal">
+                    If your medicine brand does not show up please wait for a few minutes and refresh the page.
+                  </span>
                 </p>
               </div>
 
